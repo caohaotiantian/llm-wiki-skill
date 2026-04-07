@@ -29,7 +29,8 @@ You feed it source documents (markdown, PDFs, code, docx, etc.). The agent synth
 my-wiki/
 ├── .obsidian/           # Obsidian recognizes this as a vault
 ├── raw/                 # Immutable source documents (the ground truth)
-│   └── .manifest.json   # Tracks ingested sources with SHA-256 hashes
+│   ├── .manifest.json   # Tracks ingested sources with SHA-256 hashes
+│   └── *.snapshot.md    # Snapshots for diff-based re-ingestion
 ├── wiki/                # Synthesized knowledge pages
 │   ├── concepts/        # Ideas, patterns, methodologies
 │   ├── entities/        # People, orgs, systems, products
@@ -51,12 +52,15 @@ my-wiki/
 
 ## Features
 
-- **Cascading updates** — When a source changes, all affected wiki pages update automatically
-- **Change detection** — Detects new/modified sources and suggests re-ingestion
-- **Provenance markers** — Claims are marked as extracted, inferred, or ambiguous
-- **Mass update safeguard** — Pauses for confirmation when modifying >10 pages
-- **Obsidian-native** — Uses wikilinks, callouts, frontmatter, tags, embeds
-- **Scaling guidance** — Strategies for 100+ sources / 500+ pages
+- **Incremental diff-based re-ingestion** — When a source changes, diffs the old snapshot against the new version to identify exactly what changed, then updates only the affected wiki pages. Saves significant tokens at scale.
+- **Cascading updates** — Changes propagate through the link graph: updated facts ripple to pages that cite them
+- **Change detection** — Detects new/modified sources on conversation start and suggests re-ingestion
+- **Delete and archive** — Full workflow for removing sources and handling derived pages
+- **Provenance markers** — Claims are marked as extracted, inferred, or ambiguous using inline footnotes
+- **Mass update safeguard** — Pauses for confirmation when modifying >10 existing pages
+- **Obsidian-native** — Uses wikilinks, callouts, embeds, frontmatter, tags, and Graph View
+- **Scaling guidance** — Strategies for 100+ sources / 500+ pages (index splitting, targeted lint, log rotation)
+- **Session scoping** — Prevents infinite reprocessing loops across conversations
 - **Optional Unstructured integration** — Extract text from PDFs, DOCX, PPTX, images
 - **File watcher** — Monitor raw sources for changes (macOS + Linux)
 
@@ -107,10 +111,12 @@ llm-wiki-skill/
 │   │   └── obsidian.md      # Obsidian operating reference (URI, CLI, markdown)
 │   └── scripts/
 │       ├── extract.py       # Document extraction (optional Unstructured integration)
+│       ├── diff_sources.py  # Structured diff for incremental re-ingestion
 │       └── watch.sh         # File watcher for continuous change detection
 ├── scripts/
 │   └── check-deps.py        # Dependency checker
 ├── INSTALL.md               # Installation instructions for all agent platforms
+├── LICENSE                  # MIT
 └── README.md                # This file
 ```
 
