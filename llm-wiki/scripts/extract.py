@@ -70,6 +70,15 @@ def main():
         print(f"Error: {input_path} not found")
         sys.exit(1)
 
+    # Warn on large files (>100MB) that could cause memory issues
+    file_size = os.path.getsize(input_path)
+    max_size = 100 * 1024 * 1024  # 100MB
+    if file_size > max_size:
+        print(f"Warning: {input_path} is {file_size / 1024 / 1024:.0f}MB.")
+        print(f"Files over 100MB may cause memory issues during extraction.")
+        print(f"Consider splitting the file or extracting manually.")
+        sys.exit(1)
+
     try:
         content = extract_with_unstructured(input_path)
         method = "unstructured"

@@ -53,7 +53,8 @@ Raw Sources → Wiki Pages → Index/Schema
 │   ├── concepts/
 │   ├── entities/
 │   ├── topics/
-│   └── sources/            # Source summary pages
+│   ├── sources/            # Source summary pages
+│   └── queries/            # Filed query answers and analyses
 ├── outputs/                # Generated artifacts (reports, answers)
 │   └── reports/
 ├── index.md                # Content catalog — organized by category
@@ -72,7 +73,7 @@ When the user asks to set up a new wiki or knowledge base:
 1. **Create the vault directory** at the user's specified path (or current directory)
 2. **Initialize the structure** — create `raw/`, `wiki/`, `outputs/reports/`, `index.md`, `log.md`, `schema.md`, and `raw/.manifest.json`
 3. **Initialize `.obsidian/`** with minimal config so Obsidian recognizes it as a vault
-4. **Register with Obsidian** — open the vault using `open "obsidian://open?path=<vault-path>"`
+4. **Register with Obsidian** (if installed) — open the vault using `open "obsidian://open?path=<vault-path>"`. Skip this step if Obsidian is not available; the wiki works as plain markdown files.
 5. **Write `schema.md`** with the default page templates (see `references/schema.md`)
 6. **Add the vault directory to `.gitignore`** if the vault is inside a git repo that shouldn't track it
 
@@ -105,6 +106,8 @@ Create `.obsidian/app.json` (see `references/obsidian.md` for details on each se
 ## Topics
 
 ## Sources
+
+## Queries
 ```
 
 ### Initial `log.md`
@@ -254,10 +257,10 @@ For robust extraction from complex documents (scanned PDFs, DOCX with formatting
 pip install "unstructured[all-docs]"
 ```
 
-Use the extraction script at `scripts/extract.py`:
+Use the extraction script bundled with the skill (find it relative to this SKILL.md file):
 
 ```bash
-python scripts/extract.py <input-file> <output-markdown>
+python <skill-dir>/scripts/extract.py <input-file> <output-markdown>
 ```
 
 This is optional — the skill works without it, but handles fewer file formats. When `unstructured` is not available and a file can't be read as text, tell the user what to install:

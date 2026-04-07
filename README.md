@@ -86,8 +86,11 @@ python3 scripts/check-deps.py
 ```
 
 **Required:**
-- Python 3.8+
-- Obsidian (for viewing — the skill works without it, but you lose graph view, search, and Dataview)
+- An AI coding agent that supports skills (Claude Code, Codex, Gemini CLI, etc.)
+
+**Recommended:**
+- Obsidian — for graph view, search, and Dataview queries. The skill works without it (it's just markdown files), but Obsidian makes the wiki much more useful.
+- Python 3.8+ — needed only for the bundled scripts (extraction, file watcher, dependency checker). The core skill is pure markdown and works without Python.
 
 **Optional:**
 - `unstructured` Python package — for PDF/DOCX/PPTX extraction

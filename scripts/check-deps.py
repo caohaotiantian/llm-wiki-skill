@@ -9,6 +9,8 @@ Usage:
     python3 check-deps.py
 """
 
+from __future__ import annotations
+
 import shutil
 import subprocess
 import sys
@@ -171,25 +173,21 @@ def main():
     print("OPTIONAL — Document Extraction")
     print("-" * 40)
 
-    ok, detail = check_unstructured()
-    print(f"  [{check_mark(ok):>7}]  unstructured       {detail}")
-    if ok:
+    has_unstructured, unstructured_detail = check_unstructured()
+    print(f"  [{check_mark(has_unstructured):>7}]  unstructured       {unstructured_detail}")
+    if has_unstructured:
         for name, extra_ok, extra_detail in check_unstructured_extras():
             print(f"  [{check_mark(extra_ok):>7}]  {name:<18} {extra_detail}")
     else:
         print("           Enables: PDF, DOCX, PPTX, image OCR extraction")
 
-    ok, detail = check_pymupdf()
-    print(f"  [{check_mark(ok):>7}]  PyMuPDF            {detail}")
+    has_pymupdf, pymupdf_detail = check_pymupdf()
+    print(f"  [{check_mark(has_pymupdf):>7}]  PyMuPDF            {pymupdf_detail}")
 
-    ok, detail = check_pdftotext()
-    print(f"  [{check_mark(ok):>7}]  pdftotext          {detail}")
+    has_pdftotext, pdftotext_detail = check_pdftotext()
+    print(f"  [{check_mark(has_pdftotext):>7}]  pdftotext          {pdftotext_detail}")
 
-    if not any([
-        check_unstructured()[0],
-        check_pymupdf()[0],
-        check_pdftotext()[0],
-    ]):
+    if not any([has_unstructured, has_pymupdf, has_pdftotext]):
         print()
         print("  NOTE: No PDF extraction tools found.")
         print("  The skill can still ingest markdown, text, and code files.")
