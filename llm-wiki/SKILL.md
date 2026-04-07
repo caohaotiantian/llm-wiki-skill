@@ -182,7 +182,9 @@ One-to-two sentence summary for quick scanning.
 - Part of [[Broader Topic]]
 
 ## Open Questions
-<!-- Things worth investigating further -->
+<!-- Use callouts to highlight question context -->
+> [!question] Question text
+> Why this matters and what we'd need to answer it.
 
 ## Sources
 - [[raw/articles/source-name]] — extracted on YYYY-MM-DD
@@ -371,15 +373,27 @@ The depth of cascading depends on the nature of the change:
 Each conversation session should have a clear scope — don't try to re-process the entire wiki every time. Check `log.md` to understand what's already been done, and focus on what's new or changed since the last operation. This prevents infinite reprocessing loops where the agent keeps finding "improvements" to make. If the user asks for a comprehensive update, that's fine — but don't initiate one unprompted.
 
 ### Obsidian integration
-- Use standard Obsidian markdown: `[[wikilinks]]`, `#tags`, YAML frontmatter
-- The Graph View in Obsidian will automatically visualize the wiki's link structure
-- Dataview queries can surface pages by frontmatter fields (status, tags, sources)
-- The wiki is just a folder of markdown files — it works with or without Obsidian open
+
+The wiki is a folder of markdown files — it works with or without Obsidian open. But Obsidian adds significant value through its linking, graph, and query features. See `references/obsidian.md` for the complete reference (URI scheme, CLI, markdown syntax, plugins).
+
+Key points:
+
+- **Wikilinks**: Use `[[page-name]]` for all internal links (not `[text](path)`). Obsidian tracks renames automatically. Link to headings with `[[page#Heading]]` and blocks with `[[page#^block-id]]`.
+- **Embeds**: Use `![[page-name]]` to embed one note inside another — useful for embedding source summaries into concept pages.
+- **Callouts**: Use `> [!type]` blocks for structured annotations — `> [!warning]` for risks, `> [!question]` for open questions, `> [!tip]` for insights. These render as styled blocks in Obsidian.
+- **Provenance markers**: Use inline footnotes to mark claim confidence: no marker = extracted from source, `^[inferred]` = LLM-synthesized, `^[ambiguous]` = sources disagree.
+- **Properties**: YAML frontmatter is queryable via Dataview. Keep `tags`, `status`, `sources`, `created`, `updated` consistent across all pages.
+- **Tags**: Use `#tags` inline or in frontmatter. Prefer lowercase-hyphenated, max 5 per page. Nested tags like `#architecture/microservices` create hierarchy.
+- **Graph View**: Obsidian automatically visualizes the wiki's link structure. Denser cross-linking = more useful graph.
+- **CLI** (v1.12.0+): If Obsidian is running, use `obsidian read`, `obsidian search`, `obsidian backlinks`, `obsidian rename` for operations that benefit from Obsidian's awareness of links. Use `obsidian rename` instead of filesystem renames to update all backlinks.
+- **URI scheme**: Use `open "obsidian://open?path=<vault-path>"` to register and open vaults. Use `obsidian://open?vault=<name>&file=<path>` to navigate to specific pages.
+- **Dataview**: If the plugin is installed, users can query pages dynamically — e.g., list all `status: needs-review` pages, or build tables from frontmatter fields.
 
 ---
 
 ## Bundled Resources
 
 - `references/schema.md` — Default page templates and frontmatter conventions
+- `references/obsidian.md` — Obsidian operating reference: URI scheme, CLI commands, flavored markdown syntax, vault config, recommended plugins, and retrieval patterns
 - `scripts/extract.py` — Document extraction using Unstructured (optional dependency)
 - `scripts/watch.sh` — File watcher for continuous change detection
