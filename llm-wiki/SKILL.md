@@ -1,0 +1,385 @@
+---
+name: llm-wiki
+description: >
+  Build and maintain an autonomous, self-compounding knowledge base (wiki) inside an Obsidian vault.
+  Use this skill whenever the user wants to: create a knowledge base or wiki, ingest documents into a
+  structured knowledge system, query a compiled knowledge base, maintain or lint a wiki for consistency,
+  set up automated knowledge synchronization, or manage cross-referenced documentation. Also trigger
+  when the user mentions "wiki", "knowledge base", "knowledge graph", "ingest documents", "compile notes",
+  "cross-reference", "wiki lint", or wants to turn a collection of files into organized, interlinked knowledge.
+  This skill handles the full lifecycle: setup, ingestion, querying, linting, and continuous maintenance.
+---
+
+# LLM Wiki
+
+An autonomous, self-compounding knowledge base that lives in an Obsidian vault. You ingest raw sources (articles, PDFs, code, docs), the LLM synthesizes them into interlinked wiki pages, and periodic linting keeps everything consistent. The wiki is a **persistent, compounding artifact** — knowledge is pre-synthesized and cross-referenced, not re-queried from raw documents each time.
+
+The human is in charge of sourcing, exploration, and asking the right questions. You do the grunt work — summarizing, cross-referencing, filing, and bookkeeping.
+
+## Core Concepts
+
+### Three Layers
+
+```
+Raw Sources → Wiki Pages → Index/Schema
+(immutable)   (synthesized)  (coordination)
+```
+
+- **Raw sources** are never modified after ingestion. They are the ground truth. After ingestion, lock them with `chmod -R a-w raw/` so neither you nor the user accidentally edits them. Unlock temporarily only when adding new sources.
+- **Wiki pages** are the synthesized knowledge layer — entities, concepts, topics — with cross-references via `[[wikilinks]]`.
+- **Index and log** are coordination files that track what exists and what happened.
+
+### Three Operations
+
+| Operation | What it does | When to use |
+|-----------|-------------|-------------|
+| **Ingest** | Process sources → create/update wiki pages | New source material arrives |
+| **Query** | Search wiki → synthesize answer with citations | User asks a question |
+| **Lint** | Health check → fix inconsistencies | Periodically, or after large ingests |
+
+---
+
+## Vault Structure
+
+```
+<vault-root>/
+├── .obsidian/              # Obsidian configuration
+├── raw/                    # Immutable source documents
+│   ├── articles/
+│   ├── docs/
+│   ├── code/
+│   └── .manifest.json      # Tracks ingested sources (hash, timestamp, resulting pages)
+├── wiki/                   # Synthesized knowledge pages
+│   ├── concepts/
+│   ├── entities/
+│   ├── topics/
+│   └── sources/            # Source summary pages
+├── outputs/                # Generated artifacts (reports, answers)
+│   └── reports/
+├── index.md                # Content catalog — organized by category
+├── log.md                  # Append-only operation history
+└── schema.md               # Wiki conventions and page templates
+```
+
+The category subdirectories under `wiki/` are suggestions — the actual taxonomy should emerge from the content. If a domain naturally has different categories (e.g., `protocols/`, `people/`, `systems/`), use those instead.
+
+---
+
+## Setup
+
+When the user asks to set up a new wiki or knowledge base:
+
+1. **Create the vault directory** at the user's specified path (or current directory)
+2. **Initialize the structure** — create `raw/`, `wiki/`, `outputs/reports/`, `index.md`, `log.md`, `schema.md`, and `raw/.manifest.json`
+3. **Initialize `.obsidian/`** with minimal config so Obsidian recognizes it as a vault
+4. **Register with Obsidian** — open the vault using `open "obsidian://open?path=<vault-path>"`
+5. **Write `schema.md`** with the default page templates (see `references/schema.md`)
+6. **Add the vault directory to `.gitignore`** if the vault is inside a git repo that shouldn't track it
+
+### Minimal `.obsidian/` config
+
+Create `.obsidian/app.json`:
+```json
+{
+  "alwaysUpdateLinks": true,
+  "newLinkFormat": "relative",
+  "useMarkdownLinks": false
+}
+```
+
+### Initial `index.md`
+
+```markdown
+# Wiki Index
+
+> Auto-maintained catalog of all wiki pages. Updated on every ingest.
+
+## Concepts
+
+## Entities
+
+## Topics
+
+## Sources
+```
+
+### Initial `log.md`
+
+The log uses a strict format so it can be reliably parsed by grep. Never deviate from this heading structure — consistency matters more than aesthetics here.
+
+```markdown
+# Operation Log
+
+> Append-only record of wiki operations. Each entry follows the exact format:
+> `## [YYYY-MM-DD HH:MM] action | subject`
+> where action is one of: setup, ingest, re-ingest, query, lint, update
+
+## [YYYY-MM-DD HH:MM] setup | Wiki initialized
+- Vault created at `<path>`
+```
+
+### Initial `.manifest.json`
+
+```json
+{
+  "sources": [],
+  "version": 1
+}
+```
+
+---
+
+## Ingest
+
+Ingestion is the core operation. When the user provides source material (files, URLs, pasted text):
+
+### Step 1: Accept and store the source
+
+- Unlock raw sources if locked: `chmod -R u+w raw/`
+- Copy or save the source into `raw/` under the appropriate subdirectory
+- For non-markdown files (PDF, DOCX, etc.), extract text content first (see **Document Extraction** below)
+- Save the extracted markdown alongside the original in `raw/` with a `.extracted.md` suffix
+- Re-lock after storing: `chmod -R a-w raw/`
+
+### Step 2: Read and understand
+
+- Read the source material thoroughly
+- Identify: key concepts, entities (people, organizations, systems), relationships, claims, and open questions
+- Note which existing wiki pages are relevant (check `index.md`)
+
+### Step 3: Compile into wiki pages
+
+For each significant concept, entity, or topic found in the source:
+
+- **If a wiki page already exists**: Update it with new information, marking the source. Merge, don't duplicate.
+- **If it's genuinely new**: Create a new page using the templates in `schema.md`
+
+Each wiki page should have:
+
+```markdown
+---
+aliases: []
+tags: []
+sources: ["[[raw/articles/source-name]]"]
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+status: active
+---
+
+# Page Title
+
+One-to-two sentence summary for quick scanning.
+
+## Overview
+<!-- Core description -->
+
+## Details
+<!-- Deeper content, organized by the topic's natural structure -->
+
+## Relationships
+<!-- Links to related wiki pages with brief context -->
+- Related to [[Other Concept]] — because X
+- Part of [[Broader Topic]]
+
+## Open Questions
+<!-- Things worth investigating further -->
+
+## Sources
+- [[raw/articles/source-name]] — extracted on YYYY-MM-DD
+```
+
+### Step 4: Cross-link
+
+- Use `[[wikilinks]]` for all references to other wiki pages
+- Scan existing pages for mentions of newly created concepts — add links there too
+- Every page should be reachable from at least one other page (no orphans)
+
+### Step 5: Update coordination files
+
+- **`index.md`**: Add/update entries for all new/modified pages with one-line summaries
+- **`log.md`**: Append an entry like `## [2026-04-07 14:30] ingest | "Source Title"` with a bullet list of pages created/updated
+- **`.manifest.json`**: Record the source file path, SHA-256 hash, timestamp, and list of resulting wiki pages
+
+### Batch ingestion
+
+When ingesting multiple sources at once, process them in a single pass to maximize cross-referencing. Read all sources first, then compile pages that synthesize across sources rather than creating isolated summaries.
+
+### Mass update safeguard
+
+If an ingest or update operation would modify more than 10 existing wiki pages, pause and list the affected pages for the user before proceeding. Large-scale updates are more likely to introduce drift or unintended changes, so the human should confirm the scope. This doesn't apply to creating new pages — only to modifying existing ones.
+
+---
+
+## Document Extraction
+
+The wiki handles plain markdown and text natively. For other formats, extraction is needed.
+
+### Built-in extraction (no dependencies)
+
+For simple cases, use available CLI tools:
+- **PDF**: `python3 -c "import fitz; ..."` (if PyMuPDF available) or `pdftotext`
+- **Code files**: Read directly — they're already text
+- **HTML**: Strip tags or use a markdown converter
+
+### Optional: Unstructured integration
+
+For robust extraction from complex documents (scanned PDFs, DOCX with formatting, PPTX, images with OCR):
+
+```bash
+pip install "unstructured[all-docs]"
+```
+
+Use the extraction script at `scripts/extract.py`:
+
+```bash
+python scripts/extract.py <input-file> <output-markdown>
+```
+
+This is optional — the skill works without it, but handles fewer file formats. When `unstructured` is not available and a file can't be read as text, tell the user what to install:
+
+> I can't extract text from this .docx file natively. To enable DOCX support, run:
+> `pip install "unstructured[docx]"`
+
+---
+
+## Query
+
+When the user asks a question about the wiki's knowledge:
+
+1. **Search**: Read `index.md` to identify relevant pages. For larger wikis, use grep/glob to find pages mentioning key terms.
+2. **Retrieve**: Read the relevant wiki pages.
+3. **Synthesize**: Answer the question using the wiki's compiled knowledge. Cite sources with `[[wikilinks]]`.
+4. **File the answer**: If the synthesized answer represents valuable new knowledge (a comparison, a cross-cutting analysis, a connection between topics), save it as a wiki page under `wiki/queries/` or append to a relevant existing page. This is how the wiki compounds — queries produce new artifacts that future queries can build on. Ask the user if unsure whether to file.
+
+### Query output format
+
+```markdown
+## Answer
+
+[Synthesized answer here, citing [[Wiki Page]] sources]
+
+### Sources consulted
+- [[wiki/concepts/concept-a]] — relevant because X
+- [[wiki/entities/entity-b]] — mentioned Y
+- [[raw/articles/original-source]] — primary source for Z
+```
+
+---
+
+## Lint
+
+Linting ensures wiki health. Run it periodically or when the user asks.
+
+### Checks to perform
+
+| Check | What to look for | Auto-fixable? |
+|-------|-----------------|---------------|
+| **Dead links** | `[[wikilinks]]` pointing to non-existent pages | Create stub pages |
+| **Orphaned pages** | Pages with no incoming links | Add links from related pages or index |
+| **Stale content** | Pages whose sources have been updated since last compile | Flag for re-ingestion |
+| **Missing cross-refs** | Pages that mention concepts without linking them | Add `[[wikilinks]]` |
+| **Index drift** | Pages that exist but aren't in `index.md` | Add to index |
+| **Duplicate concepts** | Multiple pages covering the same topic | Suggest merge |
+| **Empty sections** | Pages with placeholder sections that were never filled | Flag or remove |
+| **Frontmatter issues** | Missing required fields, outdated timestamps | Fix automatically |
+| **Schema drift** | Pages using outdated frontmatter schema (missing new fields, deprecated tags) | Migrate to current schema |
+
+### Lint output
+
+Save a report to `outputs/reports/lint-YYYY-MM-DD.md`:
+
+```markdown
+# Lint Report — YYYY-MM-DD
+
+## Summary
+- X issues found, Y auto-fixed, Z need attention
+
+## Auto-fixed
+- Added [[missing-page]] stub (dead link from [[source-page]])
+- Updated index.md with 3 missing entries
+
+## Needs Attention
+- [[concept-a]] and [[concept-b]] appear to cover the same topic — consider merging
+- [[entity-x]] has no incoming links and unclear relevance
+```
+
+Also append to `log.md`.
+
+---
+
+## Change Detection and Auto-Update
+
+The wiki supports three levels of change awareness:
+
+### Level 1: Explicit triggers (always available)
+
+The user runs operations manually by asking you to ingest, query, or lint.
+
+### Level 2: Proactive detection (on conversation start)
+
+At the start of each conversation where the wiki is in scope, check:
+
+1. **New files in `raw/`** not yet in `.manifest.json` → suggest ingesting them
+2. **Modified sources** (compare file hashes to `.manifest.json`) → suggest re-ingesting
+3. **Time since last lint** (check `log.md`) → suggest linting if it's been a while
+
+Report findings to the user:
+
+> I noticed 2 new files in `raw/articles/` that haven't been ingested yet, and 1 source has been modified since last compile. Want me to process these?
+
+### Level 3: Continuous monitoring (optional setup)
+
+For teams that want automatic detection, provide a file watcher script. Run `scripts/watch.sh <vault-path>` to monitor the `raw/` directory and log changes. The user can integrate this with their workflow (e.g., run it in a terminal tab, add to a cron job, or wire into git hooks).
+
+The watcher doesn't auto-ingest (that requires LLM processing) — it logs detected changes so the next conversation can pick them up.
+
+---
+
+## Cascading Updates
+
+When a source is re-ingested (because it was modified), the update must cascade:
+
+1. **Identify affected pages**: Check `.manifest.json` for which wiki pages were generated from this source
+2. **Re-read the source**: Understand what changed
+3. **Update wiki pages**: Modify affected pages to reflect the changes. Don't regenerate from scratch — preserve manually added content and links from other sources
+4. **Follow the link graph**: Check pages that link to the updated pages. If the changes affect their content (e.g., a renamed concept, a corrected fact), update those too
+5. **Update coordination files**: Refresh `index.md` summaries and append to `log.md`
+
+The depth of cascading depends on the nature of the change:
+- **Factual correction**: Update the page + any pages that cite the corrected fact
+- **New information added**: Update the page + pages that would benefit from the new info
+- **Structural change** (renamed concept, merged topics): Follow all incoming links and update references
+
+---
+
+## Best Practices
+
+### Writing wiki pages
+- Lead with a one-sentence summary — readers (and future LLM queries) scan this first
+- Use `[[wikilinks]]` liberally — connections are the wiki's primary value
+- Include provenance: which source said what, and when
+- Mark uncertain claims: "According to [[source]], X (unverified)" or use `status: needs-review` in frontmatter
+- Keep pages focused on one concept/entity — split if a page covers too much
+
+### Managing the wiki
+- The human decides what to ingest and what questions to ask. The LLM handles the bookkeeping.
+- Don't over-organize upfront — let the taxonomy emerge from the content
+- Use `log.md` to understand the wiki's history without reading every page
+- The manifest is the source of truth for what's been processed
+
+### Session scoping
+Each conversation session should have a clear scope — don't try to re-process the entire wiki every time. Check `log.md` to understand what's already been done, and focus on what's new or changed since the last operation. This prevents infinite reprocessing loops where the agent keeps finding "improvements" to make. If the user asks for a comprehensive update, that's fine — but don't initiate one unprompted.
+
+### Obsidian integration
+- Use standard Obsidian markdown: `[[wikilinks]]`, `#tags`, YAML frontmatter
+- The Graph View in Obsidian will automatically visualize the wiki's link structure
+- Dataview queries can surface pages by frontmatter fields (status, tags, sources)
+- The wiki is just a folder of markdown files — it works with or without Obsidian open
+
+---
+
+## Bundled Resources
+
+- `references/schema.md` — Default page templates and frontmatter conventions
+- `scripts/extract.py` — Document extraction using Unstructured (optional dependency)
+- `scripts/watch.sh` — File watcher for continuous change detection

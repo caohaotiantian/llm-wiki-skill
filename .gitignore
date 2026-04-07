@@ -1,0 +1,9 @@
+# Test Obsidian vault
+test-vault/
+
+# Eval workspace
+llm-wiki-workspace/
+
+# Python
+__pycache__/
+*.pyc
