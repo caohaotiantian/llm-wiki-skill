@@ -7,6 +7,7 @@ Default templates for wiki pages. These are starting points — adapt the struct
 - [Entity Page](#entity-page)
 - [Source Summary Page](#source-summary-page)
 - [Topic Page](#topic-page)
+- [Query/Analysis Page](#queryanalysis-page)
 - [Frontmatter Reference](#frontmatter-reference)
 
 ---
@@ -199,13 +200,65 @@ What's known, what's settled, what's in flux.
 
 ---
 
+## Query/Analysis Page
+
+For filed query answers, cross-cutting analyses, and comparisons. Lives in `wiki/queries/`. This is how the wiki compounds — queries become first-class knowledge artifacts.
+
+```markdown
+---
+aliases: []
+tags: [query]
+query: "The original question that prompted this analysis"
+sources:
+  - "[[wiki/concepts/concept-a]]"
+  - "[[wiki/entities/entity-b]]"
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+status: active
+---
+
+# Analysis: Descriptive Title
+
+One-sentence summary of the finding or answer.
+
+## Question
+
+The question or prompt that led to this analysis.
+
+## Answer
+
+Synthesized answer with citations to [[wiki pages]] and [[raw/sources]].
+
+> [!tip] Key Insight
+> The most important takeaway, highlighted for scanning.
+
+## Evidence
+
+| Claim | Source | Confidence |
+|-------|--------|------------|
+| Claim 1 | [[wiki/page]] | Extracted |
+| Claim 2 | [[wiki/page]] | Inferred |
+
+## Gaps
+
+- What couldn't be answered with current wiki knowledge
+- Suggested sources to investigate
+
+## Pages Consulted
+
+- [[wiki/concepts/concept-a]] — relevant because X
+- [[wiki/entities/entity-b]] — mentioned Y
+```
+
+---
+
 ## Frontmatter Reference
 
 | Field | Required | Description |
 |-------|----------|-------------|
 | `aliases` | Yes | Alternative names for this page (helps Obsidian link matching) |
-| `tags` | Yes | Page type: `concept`, `entity`, `topic`, `source` |
-| `sources` | Yes | Links to raw source documents that informed this page |
+| `tags` | Yes | Page type: `concept`, `entity`, `topic`, `source`, `query` |
+| `sources` | Yes | YAML list of wikilinks to raw source documents or wiki pages that informed this page. Use list syntax: `- "[[raw/path]]"` |
 | `created` | Yes | Date page was first created |
 | `updated` | Yes | Date page was last modified |
 | `status` | Yes | `active`, `stub`, `needs-review`, `archived` |
@@ -213,3 +266,4 @@ What's known, what's settled, what's in flux.
 | `source_type` | Source only | `article`, `paper`, `documentation`, `code`, `transcript` |
 | `source_path` | Source only | Relative path to original file in `raw/` |
 | `ingested` | Source only | Date the source was ingested |
+| `query` | Query only | The original question that prompted the analysis |

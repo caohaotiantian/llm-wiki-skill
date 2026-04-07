@@ -80,6 +80,15 @@ def main():
         except ValueError as e:
             print(str(e))
             sys.exit(1)
+    except Exception as e:
+        print(f"Extraction with unstructured failed for {input_path}: {e}")
+        print("Trying fallback extraction...")
+        try:
+            content = extract_fallback(input_path)
+            method = "fallback"
+        except ValueError as e2:
+            print(str(e2))
+            sys.exit(1)
 
     filename = os.path.basename(input_path)
     header = f"# Extracted: {filename}\n\n> Extraction method: {method}\n\n"

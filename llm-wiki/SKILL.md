@@ -25,7 +25,7 @@ Raw Sources → Wiki Pages → Index/Schema
 (immutable)   (synthesized)  (coordination)
 ```
 
-- **Raw sources** are never modified after ingestion. They are the ground truth. After ingestion, lock them with `chmod -R a-w raw/` so neither you nor the user accidentally edits them. Unlock temporarily only when adding new sources.
+- **Raw sources** are never modified after ingestion. They are the ground truth. The `.manifest.json` tracks SHA-256 hashes to detect unauthorized changes. For extra protection on Unix systems, you can lock them with `chmod -R a-w raw/` — but this is optional and doesn't work on Windows.
 - **Wiki pages** are the synthesized knowledge layer — entities, concepts, topics — with cross-references via `[[wikilinks]]`.
 - **Index and log** are coordination files that track what exists and what happened.
 
@@ -78,12 +78,16 @@ When the user asks to set up a new wiki or knowledge base:
 
 ### Minimal `.obsidian/` config
 
-Create `.obsidian/app.json`:
+Create `.obsidian/app.json` (see `references/obsidian.md` for details on each setting):
 ```json
 {
   "alwaysUpdateLinks": true,
   "newLinkFormat": "relative",
-  "useMarkdownLinks": false
+  "useMarkdownLinks": false,
+  "strictLineBreaks": false,
+  "showFrontmatter": false,
+  "defaultViewMode": "preview",
+  "livePreview": true
 }
 ```
 
@@ -127,6 +131,26 @@ The log uses a strict format so it can be reliably parsed by grep. Never deviate
 }
 ```
 
+A populated manifest entry looks like this — follow this schema exactly so cross-session consistency is maintained:
+
+```json
+{
+  "sources": [
+    {
+      "path": "raw/articles/microservices-design.md",
+      "sha256": "a1b2c3d4e5f6...",
+      "ingested_at": "2026-04-07T14:30:00Z",
+      "size_bytes": 4523,
+      "pages_created": ["wiki/concepts/microservices.md", "wiki/entities/order-service.md"],
+      "pages_updated": ["wiki/entities/team-beta.md"]
+    }
+  ],
+  "version": 1
+}
+```
+
+Fields: `path` (relative to vault root), `sha256` (file hash for change detection), `ingested_at` (ISO timestamp), `size_bytes` (file size), `pages_created` (new pages from this source), `pages_updated` (existing pages modified during this ingest).
+
 ---
 
 ## Ingest
@@ -135,11 +159,9 @@ Ingestion is the core operation. When the user provides source material (files, 
 
 ### Step 1: Accept and store the source
 
-- Unlock raw sources if locked: `chmod -R u+w raw/`
 - Copy or save the source into `raw/` under the appropriate subdirectory
 - For non-markdown files (PDF, DOCX, etc.), extract text content first (see **Document Extraction** below)
 - Save the extracted markdown alongside the original in `raw/` with a `.extracted.md` suffix
-- Re-lock after storing: `chmod -R a-w raw/`
 
 ### Step 2: Read and understand
 
@@ -160,7 +182,8 @@ Each wiki page should have:
 ---
 aliases: []
 tags: []
-sources: ["[[raw/articles/source-name]]"]
+sources:
+  - "[[raw/articles/source-name]]"
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 status: active
@@ -371,6 +394,16 @@ The depth of cascading depends on the nature of the change:
 
 ### Session scoping
 Each conversation session should have a clear scope — don't try to re-process the entire wiki every time. Check `log.md` to understand what's already been done, and focus on what's new or changed since the last operation. This prevents infinite reprocessing loops where the agent keeps finding "improvements" to make. If the user asks for a comprehensive update, that's fine — but don't initiate one unprompted.
+
+### Scaling (100+ sources, 500+ pages)
+
+As the wiki grows, some operations need to adapt:
+
+- **Index**: When `index.md` exceeds ~200 entries, it becomes expensive to read in full. Split into `index-concepts.md`, `index-entities.md`, etc., or switch to grep-based discovery instead of reading the whole index.
+- **Cross-linking**: The "scan existing pages for mentions" step becomes O(n). Use grep to search for the concept name across `wiki/` rather than reading every page. Target pages listed in `index.md` under related categories first.
+- **Lint**: Full lint checks are expensive at scale. Run targeted checks (e.g., just orphan detection, or just the pages affected by a recent ingest) by default. Reserve full-vault lint for explicit user requests.
+- **Manifest**: The `.manifest.json` file stays manageable — it only grows with the number of sources, not pages.
+- **Graph View**: Obsidian's graph view handles thousands of nodes well, but dense cross-linking makes it more useful at any scale.
 
 ### Obsidian integration
 
