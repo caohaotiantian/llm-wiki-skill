@@ -74,7 +74,7 @@ When the user asks to set up a new wiki or knowledge base:
 2. **Initialize the structure** — create `raw/`, `wiki/`, `outputs/reports/`, `index.md`, `log.md`, `schema.md`, and `raw/.manifest.json`
 3. **Initialize `.obsidian/`** with minimal config so Obsidian recognizes it as a vault
 4. **Register with Obsidian** (if installed) — open the vault using `open "obsidian://open?path=<vault-path>"`. Skip this step if Obsidian is not available; the wiki works as plain markdown files.
-5. **Write `schema.md`** with the default page templates (see `references/schema.md`)
+5. **Write `schema.md`** — copy the contents of `references/schema.md` into the vault as `schema.md`
 6. **Add the vault directory to `.gitignore`** if the vault is inside a git repo that shouldn't track it
 
 ### Minimal `.obsidian/` config
@@ -154,6 +154,8 @@ A populated manifest entry looks like this — follow this schema exactly so cro
 
 Fields: `path` (relative to vault root), `sha256` (file hash for change detection), `ingested_at` (ISO timestamp), `size_bytes` (file size), `pages_created` (new pages from this source), `pages_updated` (existing pages modified during this ingest).
 
+Compute SHA-256 with: `shasum -a 256 <file> | cut -d' ' -f1` (macOS/Linux) or `python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>`.
+
 ---
 
 ## Ingest
@@ -162,7 +164,9 @@ Ingestion is the core operation. When the user provides source material (files, 
 
 ### Step 1: Accept and store the source
 
-- Copy or save the source into `raw/` under the appropriate subdirectory
+- **Local files**: Copy into `raw/` under the appropriate subdirectory (`articles/`, `docs/`, `code/`)
+- **URLs**: Fetch the content and save as `raw/urls/<domain>-<slug>.md`. Store the original URL in the file's YAML frontmatter as `source_url`.
+- **Pasted text**: Save to `raw/notes/YYYY-MM-DD-<brief-slug>.md`
 - For non-markdown files (PDF, DOCX, etc.), extract text content first (see **Document Extraction** below)
 - Save the extracted markdown alongside the original in `raw/` with a `.extracted.md` suffix
 
@@ -277,7 +281,7 @@ When the user asks a question about the wiki's knowledge:
 1. **Search**: Read `index.md` to identify relevant pages. For larger wikis, use grep/glob to find pages mentioning key terms.
 2. **Retrieve**: Read the relevant wiki pages.
 3. **Synthesize**: Answer the question using the wiki's compiled knowledge. Cite sources with `[[wikilinks]]`.
-4. **File the answer**: If the synthesized answer represents valuable new knowledge (a comparison, a cross-cutting analysis, a connection between topics), save it as a wiki page under `wiki/queries/` or append to a relevant existing page. This is how the wiki compounds — queries produce new artifacts that future queries can build on. Ask the user if unsure whether to file.
+4. **File the answer**: Save the answer as a wiki page under `wiki/queries/` if it synthesizes across 3+ wiki pages or reveals a non-obvious connection. Don't file simple single-page lookups. This is how the wiki compounds — queries produce new artifacts that future queries can build on. Ask the user if borderline.
 
 ### Query output format
 
@@ -347,9 +351,10 @@ The user runs operations manually by asking you to ingest, query, or lint.
 
 At the start of each conversation where the wiki is in scope, check:
 
-1. **New files in `raw/`** not yet in `.manifest.json` → suggest ingesting them
-2. **Modified sources** (compare file hashes to `.manifest.json`) → suggest re-ingesting
-3. **Time since last lint** (check `log.md`) → suggest linting if it's been a while
+1. **Pending changes from file watcher** — if `raw/.pending_changes.json` exists and has entries, report them. Clear the file after processing.
+2. **New files in `raw/`** not yet in `.manifest.json` → suggest ingesting them
+3. **Modified sources** (compare file hashes to `.manifest.json`) → suggest re-ingesting
+4. **Time since last lint** (check `log.md`) → suggest linting if it's been a while
 
 Report findings to the user:
 
@@ -380,6 +385,23 @@ The depth of cascading depends on the nature of the change:
 
 ---
 
+## Deleting and Archiving
+
+When the user wants to remove a source or wiki page:
+
+### Removing a source
+1. Delete (or move to an `_archive/` directory) the source file from `raw/`
+2. Remove its entry from `.manifest.json`
+3. Check `pages_created` from the manifest entry — for each page that was solely derived from this source (no other sources listed in its frontmatter), either delete it or set `status: archived`
+4. For pages that had multiple sources, remove references to the deleted source but keep the page
+5. Run an orphan check — follow links from deleted/archived pages and fix any dangling references
+6. Update `index.md` and append to `log.md`
+
+### Archiving wiki pages
+Set `status: archived` in frontmatter rather than deleting. This preserves link history and allows recovery. Archived pages can be excluded from queries by checking the status field.
+
+---
+
 ## Best Practices
 
 ### Writing wiki pages
@@ -397,6 +419,18 @@ The depth of cascading depends on the nature of the change:
 
 ### Session scoping
 Each conversation session should have a clear scope — don't try to re-process the entire wiki every time. Check `log.md` to understand what's already been done, and focus on what's new or changed since the last operation. This prevents infinite reprocessing loops where the agent keeps finding "improvements" to make. If the user asks for a comprehensive update, that's fine — but don't initiate one unprompted.
+
+### Concurrent access
+This skill assumes single-writer access to the vault. If multiple agents or users edit the wiki simultaneously, `.manifest.json` and `index.md` can have write conflicts. For teams, coordinate so only one session modifies the wiki at a time, or use git branching to merge changes.
+
+### Provenance: claims vs pages
+Use **inline footnotes** (`^[inferred]`, `^[ambiguous]`) for claim-level confidence — marking individual statements within a page. Use **frontmatter `status`** for page-level review state (`active`, `needs-review`, `stub`, `archived`). These are complementary: a page can be `status: active` while containing some `^[ambiguous]` claims.
+
+### Log rotation
+When `log.md` exceeds ~100 entries, move older entries to `log-archive.md` and keep only the most recent 20 in `log.md`. This keeps conversation-start log checks cheap.
+
+### Version control for the vault
+Consider initializing git inside the vault itself (`git init` in the vault root) for version history and backup. The Obsidian Git plugin can automate commits. This is separate from any project repo the vault might live alongside.
 
 ### Scaling (100+ sources, 500+ pages)
 

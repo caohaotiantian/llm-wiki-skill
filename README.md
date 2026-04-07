@@ -18,7 +18,7 @@ You feed it source documents (markdown, PDFs, code, docx, etc.). The agent synth
 
 **What makes the wiki compound:**
 
-- Each source updates 5-20 interlinked pages, not just one summary
+- Each source can generate multiple interlinked pages, not just one summary
 - Queries can be filed back as wiki pages, becoming first-class knowledge
 - New sources cross-reference with existing pages automatically
 - The manifest tracks what's been processed, so nothing is re-done

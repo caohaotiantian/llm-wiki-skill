@@ -389,7 +389,7 @@ When querying the wiki, use the cheapest retrieval method that satisfies the nee
 | Need | Method | Cost |
 |------|--------|------|
 | Does a page exist? | Check `index.md` or glob for filename | Cheapest |
-| Quick summary | Read `summary:` in frontmatter | Cheap |
+| Quick summary | Read the first paragraph after the H1 heading | Cheap |
 | Specific claim | `grep -A 5 "search term" <file>` | Medium |
 | Full page content | Read the file | Expensive |
 | Cross-vault relationships | Grep for `[[page-name]]` across vault | Case-by-case |
