@@ -12,7 +12,7 @@
 #
 # Platform support:
 #   macOS:  brew install fswatch
-#   Linux:  apt install fswatch  (or: apt install inotify-tools for inotifywait fallback)
+#   Linux:  apt install inotify-tools  (preferred; or build fswatch from source)
 
 set -euo pipefail
 
@@ -38,7 +38,7 @@ elif command -v inotifywait &>/dev/null; then
 else
     echo "Error: No file watcher found."
     echo "  macOS:  brew install fswatch"
-    echo "  Linux:  apt install fswatch  (or: apt install inotify-tools)"
+    echo "  Linux:  apt install inotify-tools  (or build fswatch from source)"
     exit 1
 fi
 

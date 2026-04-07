@@ -229,7 +229,7 @@ One-to-two sentence summary for quick scanning.
 ### Step 5: Update coordination files
 
 - **`index.md`**: Add/update entries for all new/modified pages with one-line summaries
-- **`log.md`**: Append an entry like `## [2026-04-07 14:30] ingest | "Source Title"` with a bullet list of pages created/updated
+- **`log.md`**: Append an entry like `## [2026-04-07 14:30] ingest | Source Title` with a bullet list of pages created/updated
 - **`.manifest.json`**: Record the source file path, SHA-256 hash, timestamp, and list of resulting wiki pages
 
 ### Batch ingestion

@@ -70,6 +70,11 @@ def main():
         print(f"Error: {input_path} not found")
         sys.exit(1)
 
+    output_dir = os.path.dirname(output_path)
+    if output_dir and not os.path.isdir(output_dir):
+        print(f"Error: Output directory {output_dir} does not exist")
+        sys.exit(1)
+
     # Warn on large files (>100MB) that could cause memory issues
     file_size = os.path.getsize(input_path)
     max_size = 100 * 1024 * 1024  # 100MB

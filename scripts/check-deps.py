@@ -105,7 +105,7 @@ def check_fswatch() -> tuple[bool, str]:
     if system == "Darwin":
         return False, "brew install fswatch"
     else:
-        return False, "apt install fswatch (or use inotifywait)"
+        return False, "apt install inotify-tools (or build fswatch from source)"
 
 
 def check_inotifywait() -> tuple[bool, str]:
@@ -150,12 +150,17 @@ def main():
     print(f"  [{check_mark(ok):>7}]  Python 3.8+        {detail}")
     if not ok:
         all_ok = False
+    print()
+
+    # Recommended
+    print("RECOMMENDED")
+    print("-" * 40)
 
     ok, detail = check_obsidian()
     print(f"  [{check_mark(ok):>7}]  Obsidian           {detail}")
     if not ok:
         print("           Download: https://obsidian.md")
-        # Not a hard blocker — skill works without Obsidian
+        print("           The skill works without it, but you lose graph view and Dataview")
     print()
 
     # Optional: Obsidian CLI

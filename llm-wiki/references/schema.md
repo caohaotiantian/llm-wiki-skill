@@ -114,6 +114,9 @@ aliases: []
 tags: [source]
 source_type: article | paper | documentation | code | transcript
 source_path: "raw/articles/filename.md"
+sources: []
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
 ingested: YYYY-MM-DD
 status: active
 ---
