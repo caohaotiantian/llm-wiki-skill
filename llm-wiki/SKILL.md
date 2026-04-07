@@ -141,6 +141,7 @@ A populated manifest entry looks like this — follow this schema exactly so cro
   "sources": [
     {
       "path": "raw/articles/microservices-design.md",
+      "snapshot": "raw/articles/microservices-design.snapshot.md",
       "sha256": "a1b2c3d4e5f6...",
       "ingested_at": "2026-04-07T14:30:00Z",
       "size_bytes": 4523,
@@ -152,7 +153,7 @@ A populated manifest entry looks like this — follow this schema exactly so cro
 }
 ```
 
-Fields: `path` (relative to vault root), `sha256` (file hash for change detection), `ingested_at` (ISO timestamp), `size_bytes` (file size), `pages_created` (new pages from this source), `pages_updated` (existing pages modified during this ingest).
+Fields: `path` (relative to vault root), `snapshot` (path to the snapshot file for diff-based re-ingestion), `sha256` (file hash for change detection), `ingested_at` (ISO timestamp), `size_bytes` (file size), `pages_created` (new pages from this source), `pages_updated` (existing pages modified during this ingest).
 
 Compute SHA-256 with: `shasum -a 256 <file> | cut -d' ' -f1` (macOS/Linux) or `python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>`.
 
@@ -169,6 +170,7 @@ Ingestion is the core operation. When the user provides source material (files, 
 - **Pasted text**: Save to `raw/notes/YYYY-MM-DD-<brief-slug>.md`
 - For non-markdown files (PDF, DOCX, etc.), extract text content first (see **Document Extraction** below)
 - Save the extracted markdown alongside the original in `raw/` with a `.extracted.md` suffix
+- **Save a snapshot** of the ingested content as `<filename>.snapshot.md` alongside the source. This enables diff-based re-ingestion later — instead of re-reading the entire source, the agent can diff the snapshot against the new version to see exactly what changed. For text/markdown sources, the snapshot is a copy of the file; for extracted files, it's a copy of the `.extracted.md`.
 
 ### Step 2: Read and understand
 
@@ -370,13 +372,38 @@ The watcher doesn't auto-ingest (that requires LLM processing) — it logs detec
 
 ## Cascading Updates
 
-When a source is re-ingested (because it was modified), the update must cascade:
+When a source is re-ingested (because it was modified), use diff-based re-ingestion to minimize work and token usage:
+
+### Step 1: Diff the source
+
+Compare the old snapshot against the new version to understand exactly what changed. Use the bundled diff script:
+
+```bash
+python <skill-dir>/scripts/diff_sources.py <source>.snapshot.md <new-source> --json
+```
+
+This produces a structured diff showing added/removed/changed sections and unchanged sections. If no snapshot exists (legacy source ingested before snapshots were introduced), fall back to reading the entire source.
+
+### Step 2: Scope the update
+
+Based on the diff:
+- **Added sections**: May introduce new concepts/entities → check if new wiki pages are needed
+- **Removed sections**: May obsolete claims in existing wiki pages → check and remove
+- **Changed sections**: Update the specific claims/facts in affected wiki pages
+- **Unchanged sections**: Skip entirely — don't re-read or re-process these
+
+### Step 3: Update affected pages
 
 1. **Identify affected pages**: Check `.manifest.json` for which wiki pages were generated from this source
-2. **Re-read the source**: Understand what changed
-3. **Update wiki pages**: Modify affected pages to reflect the changes. Don't regenerate from scratch — preserve manually added content and links from other sources
-4. **Follow the link graph**: Check pages that link to the updated pages. If the changes affect their content (e.g., a renamed concept, a corrected fact), update those too
-5. **Update coordination files**: Refresh `index.md` summaries and append to `log.md`
+2. **Update wiki pages**: Modify only the parts that correspond to changed sections. Don't regenerate from scratch — preserve manually added content and links from other sources
+3. **Follow the link graph**: Check pages that link to the updated pages. If the changes affect their content (e.g., a renamed concept, a corrected fact), update those too
+
+### Step 4: Finalize
+
+1. **Save new snapshot**: Overwrite `<source>.snapshot.md` with the new content
+2. **Update `.manifest.json`**: New hash, timestamp, and updated page lists
+3. **Update `index.md`**: Refresh summaries for modified pages
+4. **Append to `log.md`**: Record what changed using the diff summary (e.g., "3 sections changed, 1 added")
 
 The depth of cascading depends on the nature of the change:
 - **Factual correction**: Update the page + any pages that cite the corrected fact
@@ -466,4 +493,5 @@ Key points:
 - `references/schema.md` — Default page templates and frontmatter conventions
 - `references/obsidian.md` — Obsidian operating reference: URI scheme, CLI commands, flavored markdown syntax, vault config, recommended plugins, and retrieval patterns
 - `scripts/extract.py` — Document extraction using Unstructured (optional dependency)
+- `scripts/diff_sources.py` — Structured diff between source versions for incremental re-ingestion
 - `scripts/watch.sh` — File watcher for continuous change detection
