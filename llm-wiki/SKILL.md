@@ -70,18 +70,24 @@ The category subdirectories under `wiki/` are suggestions — the actual taxonom
 
 When the user asks to set up a new wiki or knowledge base:
 
-1. **Create the vault directory** at the user's specified path (or current directory)
-2. **Set up a Python virtual environment** inside the vault for the skill's dependencies:
+1. **Check dependencies** — before anything else, verify the current Python environment has the required packages:
+   ```python
+   python3 -c "import unstructured; import watchdog; print('Dependencies OK')"
+   ```
+   - **If both imports succeed**: skip step 2 — use the current environment as-is.
+   - **If any import fails**: ask the user whether they'd like to install the missing dependencies into a new virtual environment. Do not install without confirmation.
+2. **Set up a Python virtual environment** (only if step 1 failed and user agreed):
    ```bash
    python3 -m venv <vault-path>/.venv
    <vault-path>/.venv/bin/pip install "unstructured[all-docs]" watchdog
    ```
    On Windows, use `<vault-path>\.venv\Scripts\pip` instead. This keeps the skill's dependencies isolated from the system Python.
-3. **Initialize the structure** — create `raw/`, `wiki/`, `outputs/reports/`, `index.md`, `log.md`, `schema.md`, and `raw/.manifest.json`
-4. **Initialize `.obsidian/`** with minimal config so Obsidian recognizes it as a vault
-5. **Register with Obsidian** (if installed) — open the vault using `open "obsidian://open?path=<vault-path>"`. Skip this step if Obsidian is not available; the wiki works as plain markdown files.
-6. **Write `schema.md`** — copy the contents of `references/schema.md` into the vault as `schema.md`
-7. **Add the vault directory to `.gitignore`** if the vault is inside a git repo that shouldn't track it
+3. **Create the vault directory** at the user's specified path (or current directory)
+4. **Initialize the structure** — create `raw/`, `wiki/`, `outputs/reports/`, `index.md`, `log.md`, `schema.md`, and `raw/.manifest.json`
+5. **Initialize `.obsidian/`** with minimal config so Obsidian recognizes it as a vault
+6. **Register with Obsidian** (if installed) — open the vault using `open "obsidian://open?path=<vault-path>"`. Skip this step if Obsidian is not available; the wiki works as plain markdown files.
+7. **Write `schema.md`** — copy the contents of `references/schema.md` into the vault as `schema.md`
+8. **Add the vault directory to `.gitignore`** if the vault is inside a git repo that shouldn't track it
 
 ### Minimal `.obsidian/` config
 
