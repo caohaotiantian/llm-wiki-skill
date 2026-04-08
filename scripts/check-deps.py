@@ -97,22 +97,13 @@ def check_unstructured_extras() -> list[tuple[str, bool, str]]:
     return results
 
 
-def check_fswatch() -> tuple[bool, str]:
-    found = shutil.which("fswatch") is not None
-    if found:
-        return True, "Available"
-    system = platform.system()
-    if system == "Darwin":
-        return False, "brew install fswatch"
-    else:
-        return False, "apt install inotify-tools (or build fswatch from source)"
-
-
-def check_inotifywait() -> tuple[bool, str]:
-    found = shutil.which("inotifywait") is not None
-    if found:
-        return True, "Available"
-    return False, "apt install inotify-tools"
+def check_watchdog() -> tuple[bool, str]:
+    try:
+        import watchdog  # noqa: F401
+        version = getattr(watchdog, "VERSION_STRING", "unknown")
+        return True, f"v{version}"
+    except ImportError:
+        return False, "pip install watchdog"
 
 
 def check_pymupdf() -> tuple[bool, str]:
@@ -159,6 +150,11 @@ def main():
     else:
         print('           Install: pip install "unstructured[all-docs]"')
         all_ok = False
+
+    has_watchdog, watchdog_detail = check_watchdog()
+    print(f"  [{check_mark(has_watchdog):>7}]  watchdog           {watchdog_detail}")
+    if not has_watchdog:
+        all_ok = False
     print()
 
     # Recommended
@@ -194,25 +190,6 @@ def main():
     print(f"  [{check_mark(has_pdftotext):>7}]  pdftotext          {pdftotext_detail}")
     print()
 
-    # Optional: File watcher
-    print("OPTIONAL — File Watcher (scripts/watch.sh)")
-    print("-" * 40)
-
-    system = platform.system()
-    if system == "Darwin":
-        ok, detail = check_fswatch()
-        print(f"  [{check_mark(ok):>7}]  fswatch            {detail}")
-    elif system == "Linux":
-        ok_fs, detail_fs = check_fswatch()
-        ok_in, detail_in = check_inotifywait()
-        print(f"  [{check_mark(ok_fs):>7}]  fswatch            {detail_fs}")
-        print(f"  [{check_mark(ok_in):>7}]  inotifywait        {detail_in}")
-        if not ok_fs and not ok_in:
-            print("           Install either one for file watching support")
-    else:
-        print(f"  [   N/A]  File watcher not supported on {system}")
-
-    print()
     print("=" * 60)
 
     if all_ok:
