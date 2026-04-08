@@ -211,6 +211,20 @@ This way, `git pull` in the source repo updates all agents at once.
 
 ---
 
+## Installing dependencies
+
+The skill requires Python 3.8+ and the Unstructured library for document extraction:
+
+```bash
+pip install "unstructured[all-docs]"
+```
+
+Or install only the formats you need:
+
+```bash
+pip install "unstructured[pdf,docx]"
+```
+
 ## Checking dependencies
 
 After installation, run the dependency checker:

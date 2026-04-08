@@ -84,25 +84,36 @@ def main():
         print(f"Consider splitting the file or extracting manually.")
         sys.exit(1)
 
+    # Try plain text/code formats first (no dependencies needed)
+    ext = os.path.splitext(input_path)[1].lower()
+    text_extensions = {".md", ".txt", ".csv", ".json", ".xml", ".yaml", ".yml"}
+    code_extensions = {".py", ".js", ".ts", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".rb", ".sh"}
+
+    if ext in text_extensions or ext in code_extensions:
+        try:
+            content = extract_fallback(input_path)
+            method = "fallback"
+        except ValueError:
+            pass
+        else:
+            filename = os.path.basename(input_path)
+            header = f"# Extracted: {filename}\n\n> Extraction method: {method}\n\n"
+            with open(output_path, "w", encoding="utf-8") as f:
+                f.write(header + content)
+            print(f"Extracted {input_path} -> {output_path} (method: {method})")
+            return
+
+    # For all other formats, use Unstructured (required)
     try:
         content = extract_with_unstructured(input_path)
         method = "unstructured"
     except ImportError:
-        try:
-            content = extract_fallback(input_path)
-            method = "fallback"
-        except ValueError as e:
-            print(str(e))
-            sys.exit(1)
+        print(f"Error: The 'unstructured' library is required for {ext} files.")
+        print(f'Install it with: pip install "unstructured[all-docs]"')
+        sys.exit(1)
     except Exception as e:
-        print(f"Extraction with unstructured failed for {input_path}: {e}")
-        print("Trying fallback extraction...")
-        try:
-            content = extract_fallback(input_path)
-            method = "fallback"
-        except ValueError as e2:
-            print(str(e2))
-            sys.exit(1)
+        print(f"Extraction failed for {input_path}: {e}")
+        sys.exit(1)
 
     filename = os.path.basename(input_path)
     header = f"# Extracted: {filename}\n\n> Extraction method: {method}\n\n"

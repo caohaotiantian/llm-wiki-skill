@@ -246,22 +246,26 @@ If an ingest or update operation would modify more than 10 existing wiki pages, 
 
 ## Document Extraction
 
-The wiki handles plain markdown and text natively. For other formats, extraction is needed.
+The wiki handles plain markdown, text, and code files natively. For all other formats (PDF, DOCX, PPTX, images, HTML), the [Unstructured](https://github.com/Unstructured-IO/unstructured) library is required.
 
-### Built-in extraction (no dependencies)
+### Setup
 
-For simple cases, use available CLI tools:
-- **PDF**: `python3 -c "import fitz; ..."` (if PyMuPDF available) or `pdftotext`
-- **Code files**: Read directly — they're already text
-- **HTML**: Strip tags or use a markdown converter
-
-### Optional: Unstructured integration
-
-For robust extraction from complex documents (scanned PDFs, DOCX with formatting, PPTX, images with OCR):
+Install Unstructured with full document support:
 
 ```bash
 pip install "unstructured[all-docs]"
 ```
+
+Or install only the formats you need:
+
+```bash
+pip install "unstructured[pdf]"       # PDF support
+pip install "unstructured[docx]"      # Word documents
+pip install "unstructured[pptx]"      # PowerPoint
+pip install "unstructured[docx,pdf]"  # Multiple formats
+```
+
+### Usage
 
 Use the extraction script bundled with the skill (find it relative to this SKILL.md file):
 
@@ -269,9 +273,11 @@ Use the extraction script bundled with the skill (find it relative to this SKILL
 python <skill-dir>/scripts/extract.py <input-file> <output-markdown>
 ```
 
-This is optional — the skill works without it, but handles fewer file formats. When `unstructured` is not available and a file can't be read as text, tell the user what to install:
+The script auto-detects file type and routes to the appropriate Unstructured handler. For plain text, markdown, and code files, it reads them directly without Unstructured.
 
-> I can't extract text from this .docx file natively. To enable DOCX support, run:
+If `unstructured` is not installed and the user provides a non-text file, tell them what to install:
+
+> I need the Unstructured library to extract text from this .docx file. Install it with:
 > `pip install "unstructured[docx]"`
 
 ---

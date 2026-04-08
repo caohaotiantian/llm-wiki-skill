@@ -150,6 +150,15 @@ def main():
     print(f"  [{check_mark(ok):>7}]  Python 3.8+        {detail}")
     if not ok:
         all_ok = False
+
+    has_unstructured, unstructured_detail = check_unstructured()
+    print(f"  [{check_mark(has_unstructured):>7}]  unstructured       {unstructured_detail}")
+    if has_unstructured:
+        for name, extra_ok, extra_detail in check_unstructured_extras():
+            print(f"  [{check_mark(extra_ok):>7}]  {name:<18} {extra_detail}")
+    else:
+        print('           Install: pip install "unstructured[all-docs]"')
+        all_ok = False
     print()
 
     # Recommended
@@ -174,29 +183,15 @@ def main():
         print("           The skill works fine without it (uses filesystem directly)")
     print()
 
-    # Optional: Document extraction
-    print("OPTIONAL — Document Extraction")
+    # Optional: Additional PDF tools
+    print("OPTIONAL — Additional PDF Tools")
     print("-" * 40)
-
-    has_unstructured, unstructured_detail = check_unstructured()
-    print(f"  [{check_mark(has_unstructured):>7}]  unstructured       {unstructured_detail}")
-    if has_unstructured:
-        for name, extra_ok, extra_detail in check_unstructured_extras():
-            print(f"  [{check_mark(extra_ok):>7}]  {name:<18} {extra_detail}")
-    else:
-        print("           Enables: PDF, DOCX, PPTX, image OCR extraction")
 
     has_pymupdf, pymupdf_detail = check_pymupdf()
     print(f"  [{check_mark(has_pymupdf):>7}]  PyMuPDF            {pymupdf_detail}")
 
     has_pdftotext, pdftotext_detail = check_pdftotext()
     print(f"  [{check_mark(has_pdftotext):>7}]  pdftotext          {pdftotext_detail}")
-
-    if not any([has_unstructured, has_pymupdf, has_pdftotext]):
-        print()
-        print("  NOTE: No PDF extraction tools found.")
-        print("  The skill can still ingest markdown, text, and code files.")
-        print("  For PDF/DOCX support, install one of the above.")
     print()
 
     # Optional: File watcher
