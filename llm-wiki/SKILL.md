@@ -155,7 +155,7 @@ A populated manifest entry looks like this — follow this schema exactly so cro
 
 Fields: `path` (relative to vault root), `snapshot` (path to the snapshot file for diff-based re-ingestion), `sha256` (file hash for change detection), `ingested_at` (ISO timestamp), `size_bytes` (file size), `pages_created` (new pages from this source), `pages_updated` (existing pages modified during this ingest).
 
-Compute SHA-256 with: `shasum -a 256 <file> | cut -d' ' -f1` (macOS/Linux) or `python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>`.
+Compute SHA-256 with: `python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>`
 
 ---
 
@@ -370,7 +370,7 @@ Report findings to the user:
 
 ### Level 3: Continuous monitoring (optional setup)
 
-For teams that want automatic detection, provide a file watcher script. Run `scripts/watch.sh <vault-path>` to monitor the `raw/` directory and log changes. The user can integrate this with their workflow (e.g., run it in a terminal tab, add to a cron job, or wire into git hooks).
+For teams that want automatic detection, provide a file watcher script. Run `scripts/watch.py <vault-path>` to monitor the `raw/` directory and log changes. Supports `--filter`, `--debounce`, `--json`, and `--quiet` options. The user can integrate this with their workflow (e.g., run it in a terminal tab, add to a cron job, or wire into git hooks).
 
 The watcher doesn't auto-ingest (that requires LLM processing) — it logs detected changes so the next conversation can pick them up.
 
@@ -500,4 +500,4 @@ Key points:
 - `references/obsidian.md` — Obsidian operating reference: URI scheme, CLI commands, flavored markdown syntax, vault config, recommended plugins, and retrieval patterns
 - `scripts/extract.py` — Document extraction using Unstructured (optional dependency)
 - `scripts/diff_sources.py` — Structured diff between source versions for incremental re-ingestion
-- `scripts/watch.sh` — File watcher for continuous change detection
+- `scripts/watch.py` — Cross-platform file watcher for continuous change detection (requires `watchdog`)
