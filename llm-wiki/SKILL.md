@@ -44,10 +44,7 @@ Raw Sources → Wiki Pages → Index/Schema
 ```
 <vault-root>/
 ├── .obsidian/              # Obsidian configuration
-├── raw/                    # Immutable source documents
-│   ├── articles/
-│   ├── docs/
-│   ├── code/
+├── raw/                    # Immutable source documents (flat or organized — your choice)
 │   └── .manifest.json      # Tracks ingested sources (hash, timestamp, resulting pages)
 ├── wiki/                   # Synthesized knowledge pages
 │   ├── concepts/
@@ -62,7 +59,7 @@ Raw Sources → Wiki Pages → Index/Schema
 └── schema.md               # Wiki conventions and page templates
 ```
 
-The category subdirectories under `wiki/` are suggestions — the actual taxonomy should emerge from the content. If a domain naturally has different categories (e.g., `protocols/`, `people/`, `systems/`), use those instead.
+The subdirectories under both `raw/` and `wiki/` are suggestions — users can drop files directly into `raw/` or organize them into subdirectories as they see fit. The agent discovers files by scanning `raw/` recursively, not by expecting a fixed directory structure. Similarly, the wiki taxonomy should emerge from the content. If a domain naturally has different categories (e.g., `protocols/`, `people/`, `systems/`), use those instead.
 
 ---
 
@@ -177,9 +174,9 @@ Ingestion is the core operation. When the user provides source material (files, 
 
 ### Step 1: Accept and store the source
 
-- **Local files**: Copy into `raw/` under the appropriate subdirectory (`articles/`, `docs/`, `code/`)
-- **URLs**: Fetch the content and save as `raw/urls/<domain>-<slug>.md`. Store the original URL in the file's YAML frontmatter as `source_url`.
-- **Pasted text**: Save to `raw/notes/YYYY-MM-DD-<brief-slug>.md`
+- **Local files**: The user can place files anywhere inside `raw/` — flat or in subdirectories. If the agent is copying files on the user's behalf, just put them directly in `raw/` (or a subdirectory if the user prefers organization). No specific directory structure is required.
+- **URLs**: Fetch the content and save as `raw/<domain>-<slug>.md`. Store the original URL in the file's YAML frontmatter as `source_url`.
+- **Pasted text**: Save to `raw/YYYY-MM-DD-<brief-slug>.md`
 - For non-markdown files (PDF, DOCX, etc.), extract text content first (see **Document Extraction** below)
 - Save the extracted markdown alongside the original in `raw/` with a `.extracted.md` suffix
 - **Save a snapshot** of the ingested content as `<filename>.snapshot.md` alongside the source. This enables diff-based re-ingestion later — instead of re-reading the entire source, the agent can diff the snapshot against the new version to see exactly what changed. For text/markdown sources, the snapshot is a copy of the file; for extracted files, it's a copy of the `.extracted.md`.
@@ -378,7 +375,7 @@ At the start of each conversation where the wiki is in scope, check:
 
 Report findings to the user:
 
-> I noticed 2 new files in `raw/articles/` that haven't been ingested yet, and 1 source has been modified since last compile. Want me to process these?
+> I noticed 2 new files in `raw/` that haven't been ingested yet, and 1 source has been modified since last compile. Want me to process these?
 
 ### Level 3: Continuous monitoring (optional setup)
 
