@@ -62,7 +62,7 @@ my-wiki/
 - **Scaling guidance** — Strategies for 100+ sources / 500+ pages (index splitting, targeted lint, log rotation)
 - **Session scoping** — Prevents infinite reprocessing loops across conversations
 - **Optional Unstructured integration** — Extract text from PDFs, DOCX, PPTX, images
-- **File watcher** — Monitor raw sources for changes (macOS + Linux)
+- **File watcher** — Cross-platform monitoring of raw sources for changes (requires `watchdog`)
 
 ## Installation
 
@@ -93,12 +93,10 @@ python3 scripts/check-deps.py
 - An AI coding agent that supports skills (Claude Code, Codex, Gemini CLI, etc.)
 - Python 3.8+
 - [`unstructured`](https://github.com/Unstructured-IO/unstructured) — for document extraction (PDF, DOCX, PPTX, images). Install with `pip install "unstructured[all-docs]"`.
+- [`watchdog`](https://github.com/gorakhargosh/watchdog) — for the file watcher. Install with `pip install watchdog`.
 
 **Recommended:**
 - Obsidian — for graph view, search, and Dataview queries. The skill works without it (it's just markdown files), but Obsidian makes the wiki much more useful.
-
-**Optional:**
-- `fswatch` (macOS) or `inotifywait` (Linux) — for the file watcher script
 
 ## Project Structure
 
@@ -112,7 +110,7 @@ llm-wiki-skill/
 │   └── scripts/
 │       ├── extract.py       # Document extraction (optional Unstructured integration)
 │       ├── diff_sources.py  # Structured diff for incremental re-ingestion
-│       └── watch.sh         # File watcher for continuous change detection
+│       └── watch.py         # Cross-platform file watcher (requires watchdog)
 ├── scripts/
 │   └── check-deps.py        # Dependency checker
 ├── INSTALL.md               # Installation instructions for all agent platforms
