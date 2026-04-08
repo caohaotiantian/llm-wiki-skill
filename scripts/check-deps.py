@@ -100,8 +100,9 @@ def check_unstructured_extras() -> list[tuple[str, bool, str]]:
 def check_watchdog() -> tuple[bool, str]:
     try:
         import watchdog  # noqa: F401
-        version = getattr(watchdog, "VERSION_STRING", "unknown")
-        return True, f"v{version}"
+        from importlib.metadata import version
+        ver = version("watchdog")
+        return True, f"v{ver}"
     except ImportError:
         return False, "pip install watchdog"
 
