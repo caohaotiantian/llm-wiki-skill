@@ -32,6 +32,13 @@ def check_python() -> tuple[bool, str]:
     return ok, detail
 
 
+def check_venv() -> tuple[bool, str]:
+    in_venv = sys.prefix != sys.base_prefix
+    if in_venv:
+        return True, sys.prefix
+    return False, "Not in a virtual environment (recommended: python3 -m venv .venv)"
+
+
 def check_obsidian() -> tuple[bool, str]:
     system = platform.system()
     if system == "Darwin":
@@ -142,6 +149,10 @@ def main():
     print(f"  [{check_mark(ok):>7}]  Python 3.8+        {detail}")
     if not ok:
         all_ok = False
+
+    venv_ok, venv_detail = check_venv()
+    venv_status = "OK" if venv_ok else "WARN"
+    print(f"  [{venv_status:>7}]  Virtual env        {venv_detail}")
 
     has_unstructured, unstructured_detail = check_unstructured()
     print(f"  [{check_mark(has_unstructured):>7}]  unstructured       {unstructured_detail}")
