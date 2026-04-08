@@ -17,3 +17,7 @@ Thumbs.db
 .idea/
 *.swp
 *~
+
+# Local-only files
+CLAUDE.md
+docs/
