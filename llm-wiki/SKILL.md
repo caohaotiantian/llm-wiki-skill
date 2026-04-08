@@ -358,30 +358,31 @@ Also append to `log.md`.
 
 ## Change Detection and Auto-Update
 
-The wiki supports three levels of change awareness:
+The wiki automatically detects and ingests changes — the user just drops files into `raw/` and the agent handles the rest.
 
-### Level 1: Explicit triggers (always available)
+### Auto-ingest (on conversation start)
 
-The user runs operations manually by asking you to ingest, query, or lint.
+At the start of each conversation where the wiki is in scope, scan for changes and **ingest them automatically**:
 
-### Level 2: Proactive detection (on conversation start)
+1. **Pending changes from file watcher** — if `raw/.pending_changes.json` exists and has entries, ingest them. Clear the file after processing.
+2. **New files in `raw/`** not yet in `.manifest.json` → ingest them
+3. **Modified sources** (compare file hashes to `.manifest.json`) → re-ingest them using diff-based processing
 
-At the start of each conversation where the wiki is in scope, check:
+Briefly report what was processed:
 
-1. **Pending changes from file watcher** — if `raw/.pending_changes.json` exists and has entries, report them. Clear the file after processing.
-2. **New files in `raw/`** not yet in `.manifest.json` → suggest ingesting them
-3. **Modified sources** (compare file hashes to `.manifest.json`) → suggest re-ingesting
-4. **Time since last lint** (check `log.md`) → suggest linting if it's been a while
+> Auto-ingested 2 new files and re-ingested 1 modified source. Created 5 wiki pages, updated 2.
 
-Report findings to the user:
+No user confirmation is needed for auto-ingest — **except** when the mass update safeguard applies (modifying >10 existing pages). In that case, pause and list the affected pages before proceeding.
 
-> I noticed 2 new files in `raw/` that haven't been ingested yet, and 1 source has been modified since last compile. Want me to process these?
+### Explicit triggers
 
-### Level 3: Continuous monitoring (optional setup)
+The user can also run operations manually by asking you to ingest, query, or lint. Additionally, if the user asks for a lint after auto-ingest completes, run it.
 
-For teams that want automatic detection, provide a file watcher script. Run `scripts/watch.py <vault-path>` to monitor the `raw/` directory and log changes. Supports `--filter`, `--debounce`, `--json`, and `--quiet` options. The user can integrate this with their workflow (e.g., run it in a terminal tab, add to a cron job, or wire into git hooks).
+### Continuous monitoring (optional setup)
 
-The watcher doesn't auto-ingest (that requires LLM processing) — it logs detected changes so the next conversation can pick them up.
+For teams that want real-time detection between conversations, provide a file watcher script. Run `scripts/watch.py <vault-path>` to monitor the `raw/` directory and log changes to `.pending_changes.json`. Supports `--filter`, `--debounce`, `--json`, and `--quiet` options. The user can run this in a terminal tab, cron job, or git hook.
+
+The watcher logs detected changes so the next conversation's auto-ingest picks them up immediately.
 
 ---
 
