@@ -74,10 +74,11 @@ class _DebouncedHandler(FileSystemEventHandler):
 
     def _should_ignore(self, path: str) -> bool:
         """Return True if the event should be ignored."""
-        basename = os.path.basename(path)
-        if basename.startswith("."):
+        # Ignore any file whose basename or any parent directory starts with "."
+        parts = Path(path).parts
+        if any(part.startswith(".") for part in parts):
             return True
-        if self._filter_glob and not fnmatch.fnmatch(basename, self._filter_glob):
+        if self._filter_glob and not fnmatch.fnmatch(os.path.basename(path), self._filter_glob):
             return True
         return False
 
