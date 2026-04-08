@@ -109,9 +109,9 @@ class _DebouncedHandler(FileSystemEventHandler):
     def _flush_change(self, rel_path: str) -> None:
         """Called after debounce period — record the change."""
         timestamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
-        record_change(self._pending_file, rel_path, timestamp)
 
         with self._lock:
+            record_change(self._pending_file, rel_path, timestamp)
             self._timers.pop(rel_path, None)
 
         if self._json_output:
@@ -127,7 +127,27 @@ class _DebouncedHandler(FileSystemEventHandler):
         self._handle_event(event)
 
     def on_moved(self, event: FileSystemEvent) -> None:
-        self._handle_event(event)
+        # For moves/renames, record the destination path (the new file location)
+        if event.is_directory:
+            return
+        dest_path = event.dest_path
+        if self._should_ignore(dest_path):
+            return
+
+        rel_path = os.path.relpath(dest_path, self._vault_path)
+
+        with self._lock:
+            if rel_path in self._timers:
+                self._timers[rel_path].cancel()
+
+            timer = threading.Timer(
+                self._debounce,
+                self._flush_change,
+                args=(rel_path,),
+            )
+            timer.daemon = True
+            timer.start()
+            self._timers[rel_path] = timer
 
 
 class Watcher:
@@ -250,7 +270,7 @@ def main() -> None:
     parser.add_argument(
         "--quiet",
         action="store_true",
-        help="Suppress console output, only write to .pending_changes.json",
+        help="Suppress human-readable console output (JSON lines from --json are unaffected)",
     )
 
     args = parser.parse_args()
