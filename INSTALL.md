@@ -213,16 +213,16 @@ This way, `git pull` in the source repo updates all agents at once.
 
 ## Installing dependencies
 
-The skill requires Python 3.8+ and the Unstructured library for document extraction:
+The skill requires Python 3.8+ and two pip packages:
 
 ```bash
-pip install "unstructured[all-docs]"
+pip install "unstructured[all-docs]" watchdog
 ```
 
-Or install only the formats you need:
+Or install only the Unstructured formats you need:
 
 ```bash
-pip install "unstructured[pdf,docx]"
+pip install "unstructured[pdf,docx]" watchdog
 ```
 
 ## Checking dependencies
@@ -239,4 +239,4 @@ Or from the cloned repo:
 python3 scripts/check-deps.py
 ```
 
-This checks for Python, Obsidian, optional extraction libraries, and file watcher tools.
+This checks for Python, Obsidian, unstructured, watchdog, and optional PDF tools.
