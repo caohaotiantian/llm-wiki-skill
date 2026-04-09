@@ -169,27 +169,33 @@ def format_human_readable(diff: dict) -> str:
 
 
 def main():
-    if len(sys.argv) < 3:
-        print(f"Usage: {sys.argv[0]} <old-file> <new-file> [--json]")
-        sys.exit(1)
+    import argparse
 
-    old_path = sys.argv[1]
-    new_path = sys.argv[2]
-    output_json = "--json" in sys.argv
+    parser = argparse.ArgumentParser(
+        description="Diff two versions of a source document and produce a structured summary.",
+    )
+    parser.add_argument("old_file", help="Path to the old version")
+    parser.add_argument("new_file", help="Path to the new version")
+    parser.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Output as machine-readable JSON instead of human-readable summary",
+    )
 
-    for path in [old_path, new_path]:
+    args = parser.parse_args()
+
+    for path in [args.old_file, args.new_file]:
         if not os.path.exists(path):
             print(f"Error: {path} not found")
             sys.exit(1)
 
-    with open(old_path, "r", encoding="utf-8", errors="replace") as f:
+    with open(args.old_file, "r", encoding="utf-8", errors="replace") as f:
         old_text = f.read()
-    with open(new_path, "r", encoding="utf-8", errors="replace") as f:
+    with open(args.new_file, "r", encoding="utf-8", errors="replace") as f:
         new_text = f.read()
 
     diff = compute_diff(old_text, new_text)
 
-    if output_json:
+    if args.json_output:
         print(json.dumps(diff, indent=2))
     else:
         print(format_human_readable(diff))

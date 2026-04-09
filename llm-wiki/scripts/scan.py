@@ -54,7 +54,7 @@ def load_manifest(vault_path: Path) -> dict:
     return {"sources": [], "version": 1}
 
 
-def scan_raw(vault_path: Path) -> dict:
+def scan_raw(vault_path: Path, quality_ratio: float = MIN_QUALITY_RATIO) -> dict:
     """Scan raw/ and return a report of work needed.
 
     Returns dict with keys:
@@ -102,8 +102,9 @@ def scan_raw(vault_path: Path) -> dict:
             if ext in NATIVE_EXTENSIONS:
                 continue
 
-            # Determine expected extracted path
-            extracted_path = os.path.join(str(extracted_dir), fname + ".md")
+            # Determine expected extracted path (preserving subdirectory structure)
+            rel_to_raw = os.path.relpath(full_path, str(raw_dir))
+            extracted_path = os.path.join(str(extracted_dir), rel_to_raw + ".md")
             in_manifest = rel_path in manifest_by_path
 
             if not in_manifest:
@@ -159,14 +160,14 @@ def scan_raw(vault_path: Path) -> dict:
                     "extracted_bytes": extracted_size,
                     "reason": "extracted file nearly empty",
                 })
-            elif source_size > 0 and (extracted_size / source_size) < MIN_QUALITY_RATIO:
+            elif source_size > 0 and (extracted_size / source_size) < quality_ratio:
                 low_quality.append({
                     "path": rel_path,
                     "extracted": os.path.relpath(check_path, vault_path),
                     "source_bytes": source_size,
                     "extracted_bytes": extracted_size,
                     "ratio": f"{extracted_size / source_size:.4f}",
-                    "reason": f"size ratio {extracted_size / source_size:.2%} below {MIN_QUALITY_RATIO:.0%} threshold",
+                    "reason": f"size ratio {extracted_size / source_size:.2%} below {quality_ratio:.0%} threshold",
                 })
             else:
                 ok.append(rel_path)
@@ -297,8 +298,7 @@ def main():
               file=sys.stderr)
         sys.exit(1)
 
-    global MIN_QUALITY_RATIO
-    MIN_QUALITY_RATIO = args.quality_ratio
+    quality_ratio = args.quality_ratio
 
     if args.watch is not None:
         # Periodic scanning mode
@@ -306,7 +306,7 @@ def main():
         print(f"Scanning {vault_path / 'raw'} every {interval}s. Press Ctrl+C to stop.\n")
         try:
             while True:
-                report = scan_raw(vault_path)
+                report = scan_raw(vault_path, quality_ratio=quality_ratio)
                 print_report(report, json_output=args.json_output)
                 if args.auto_extract and report["stats"]["total_actionable"] > 0:
                     auto_extract(vault_path, report)
@@ -315,7 +315,7 @@ def main():
             print("\nStopped.")
     else:
         # One-shot scan
-        report = scan_raw(vault_path)
+        report = scan_raw(vault_path, quality_ratio=quality_ratio)
         print_report(report, json_output=args.json_output)
         if args.auto_extract and report["stats"]["total_actionable"] > 0:
             auto_extract(vault_path, report)

@@ -82,20 +82,28 @@ NATIVE_EXTENSIONS = TEXT_EXTENSIONS | CODE_EXTENSIONS
 
 
 def default_output_path(input_path: str) -> str:
-    """Derive default output path: raw/extracted/<filename>.md"""
-    input_dir = os.path.dirname(os.path.abspath(input_path))
-    filename = os.path.basename(input_path)
+    """Derive default output path: raw/extracted/<relative-path>.md
+
+    Preserves subdirectory structure under raw/ so that
+    raw/papers/report.pdf -> raw/extracted/papers/report.pdf.md
+    raw/report.pdf        -> raw/extracted/report.pdf.md
+    """
+    abs_input = os.path.abspath(input_path)
+    input_dir = os.path.dirname(abs_input)
 
     # Walk up to find raw/ directory
     check_dir = input_dir
     while check_dir and check_dir != os.path.dirname(check_dir):
         if os.path.basename(check_dir) == "raw":
-            extracted_dir = os.path.join(check_dir, "extracted")
-            os.makedirs(extracted_dir, exist_ok=True)
-            return os.path.join(extracted_dir, filename + ".md")
+            # Compute path relative to raw/
+            rel_to_raw = os.path.relpath(abs_input, check_dir)
+            extracted_path = os.path.join(check_dir, "extracted", rel_to_raw + ".md")
+            os.makedirs(os.path.dirname(extracted_path), exist_ok=True)
+            return extracted_path
         check_dir = os.path.dirname(check_dir)
 
     # Fallback: put extracted/ next to the input file
+    filename = os.path.basename(input_path)
     extracted_dir = os.path.join(input_dir, "extracted")
     os.makedirs(extracted_dir, exist_ok=True)
     return os.path.join(extracted_dir, filename + ".md")
@@ -128,6 +136,13 @@ def main():
 
     if not os.path.exists(input_path):
         print(f"Error: {input_path} not found")
+        sys.exit(1)
+
+    # Guard: don't re-extract files already in an extracted/ directory
+    abs_input = os.path.abspath(input_path)
+    parts = abs_input.split(os.sep)
+    if "extracted" in parts:
+        print(f"Error: {input_path} is already in an extracted/ directory. Skipping.")
         sys.exit(1)
 
     ext = os.path.splitext(input_path)[1].lower()

@@ -213,7 +213,7 @@ This way, `git pull` in the source repo updates all agents at once.
 
 ## Installing dependencies
 
-The skill requires Python 3.10+ and two pip packages:
+The skill works without any Python dependencies — the agent can read files directly. For better extraction quality and file monitoring, install Python 3.10+ and these packages:
 
 ```bash
 pip install docling watchdog

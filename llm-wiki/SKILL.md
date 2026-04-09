@@ -165,7 +165,7 @@ A populated manifest entry looks like this — follow this schema exactly so cro
 }
 ```
 
-Fields: `path` (relative to vault root), `snapshot` (path to the snapshot file for diff-based re-ingestion), `sha256` (file hash for change detection), `ingested_at` (ISO timestamp), `size_bytes` (file size), `pages_created` (new pages from this source), `pages_updated` (existing pages modified during this ingest).
+Fields: `path` (relative to vault root), `extracted` (path to the extracted markdown in `raw/extracted/`, omit for text/markdown sources that don't need extraction), `extraction_method` (`docling +ocr`, `docling`, `fallback`, or `agent`; omit for text/markdown sources), `snapshot` (path to the snapshot file for diff-based re-ingestion), `sha256` (file hash for change detection), `ingested_at` (ISO timestamp), `size_bytes` (file size), `pages_created` (new pages from this source), `pages_updated` (existing pages modified during this ingest).
 
 Compute SHA-256 with: `python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>`
 
@@ -180,9 +180,8 @@ Ingestion is the core operation. When the user provides source material (files, 
 - **Local files**: The user can place files anywhere inside `raw/` — flat or in subdirectories. If the agent is copying files on the user's behalf, just put them directly in `raw/` (or a subdirectory if the user prefers organization). No specific directory structure is required.
 - **URLs**: Fetch the content and save as `raw/<domain>-<slug>.md`. Store the original URL in the file's YAML frontmatter as `source_url`.
 - **Pasted text**: Save to `raw/YYYY-MM-DD-<brief-slug>.md`
-- For non-markdown files (PDF, DOCX, etc.), extract text content first (see **Document Extraction** below)
-- Save the extracted markdown alongside the original in `raw/` with a `.extracted.md` suffix
-- **Save a snapshot** of the ingested content as `<filename>.snapshot.md` alongside the source. This enables diff-based re-ingestion later — instead of re-reading the entire source, the agent can diff the snapshot against the new version to see exactly what changed. For text/markdown sources, the snapshot is a copy of the file; for extracted files, it's a copy of the `.extracted.md`.
+- For non-markdown files (PDF, DOCX, etc.), extract text content first (see **Document Extraction** below). Extracted markdown goes to `raw/extracted/<filename>.md`.
+- **Save a snapshot** for diff-based re-ingestion later — instead of re-reading the entire source, the agent can diff the snapshot against the new version to see exactly what changed. For text/markdown sources, the snapshot goes alongside the source (e.g., `raw/article.md.snapshot.md`). For extracted binary files, the snapshot goes alongside the extracted file (e.g., `raw/extracted/report.pdf.md.snapshot.md`).
 
 ### Step 2: Read and understand
 
@@ -260,6 +259,8 @@ If an ingest or update operation would modify more than 10 existing wiki pages, 
 
 The wiki handles plain markdown, text, and code files natively. For all other formats (PDF, DOCX, PPTX, XLSX, images, HTML, and more), there are two extraction approaches. Extracted markdown files are stored in `raw/extracted/` — the originals in `raw/` are never modified.
 
+> **Note:** `<skill-dir>` in the commands below refers to the directory containing this SKILL.md file.
+
 ### Approach 1: Docling extraction (recommended for large or complex documents)
 
 Use the extraction script bundled with the skill. It uses [Docling](https://github.com/docling-project/docling) with optimized settings: accurate table structure recognition, OCR for scanned pages, and 2x image resolution.
@@ -333,6 +334,8 @@ The scan detects:
 - **Failed extractions**: in manifest but extracted file is missing
 - **Low quality**: extracted file is suspiciously small relative to source (<1% size ratio or nearly empty)
 - **Modified sources**: file hash differs from what's recorded in manifest
+
+> **Note:** scan.py only reports binary files needing extraction. New text/markdown files are detected by comparing `raw/` contents against `.manifest.json` directly.
 
 ---
 

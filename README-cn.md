@@ -31,9 +31,9 @@
 my-wiki/
 ├── .obsidian/           # Obsidian 将此识别为仓库
 ├── raw/                 # 不可变的源文档（真实数据来源）
-│   ├── extracted/       # Docling 提取的 Markdown 版本（针对二进制格式）
+│   ├── extracted/       # Docling 提取的 Markdown（+ 二进制源文档的快照）
 │   ├── .manifest.json   # 使用 SHA-256 哈希追踪已摄入的源文档
-│   └── *.snapshot.md    # 用于差异化重新摄入的快照
+│   └── *.snapshot.md    # 用于差异化重新摄入的快照（文本源文档）
 ├── wiki/                # 综合生成的知识页面
 │   ├── concepts/        # 概念、模式、方法论
 │   ├── entities/        # 人物、组织、系统、产品

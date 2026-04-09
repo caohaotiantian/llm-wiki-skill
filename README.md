@@ -31,9 +31,9 @@ You feed it source documents — markdown, PDFs, Word docs, PowerPoint, spreadsh
 my-wiki/
 ├── .obsidian/           # Obsidian recognizes this as a vault
 ├── raw/                 # Immutable source documents (the ground truth)
-│   ├── extracted/       # Docling-extracted markdown versions of binary sources
+│   ├── extracted/       # Docling-extracted markdown (+ snapshots for binary sources)
 │   ├── .manifest.json   # Tracks ingested sources with SHA-256 hashes
-│   └── *.snapshot.md    # Snapshots for diff-based re-ingestion
+│   └── *.snapshot.md    # Snapshots for diff-based re-ingestion (text sources)
 ├── wiki/                # Synthesized knowledge pages
 │   ├── concepts/        # Ideas, patterns, methodologies
 │   ├── entities/        # People, orgs, systems, products

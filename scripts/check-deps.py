@@ -89,11 +89,10 @@ def check_docling() -> tuple[bool, str]:
 
 def check_watchdog() -> tuple[bool, str]:
     try:
-        import watchdog  # noqa: F401
-        from importlib.metadata import version
+        from importlib.metadata import version, PackageNotFoundError
         ver = version("watchdog")
         return True, f"v{ver}"
-    except ImportError:
+    except PackageNotFoundError:
         return False, "pip install watchdog"
 
 
@@ -122,16 +121,18 @@ def main():
     print("=" * 60)
     print()
 
-    all_ok = True
-
     # Required
     print("REQUIRED")
+    print("-" * 40)
+    print("  (none — the skill works with just an AI agent)")
+    print()
+
+    # Recommended
+    print("RECOMMENDED")
     print("-" * 40)
 
     ok, detail = check_python()
     print(f"  [{check_mark(ok):>7}]  Python 3.10+       {detail}")
-    if not ok:
-        all_ok = False
 
     venv_ok, venv_detail = check_venv()
     venv_status = "OK" if venv_ok else "WARN"
@@ -141,17 +142,12 @@ def main():
     print(f"  [{check_mark(has_docling):>7}]  docling            {docling_detail}")
     if not has_docling:
         print("           Install: pip install docling")
-        all_ok = False
+        print("           Without it, the agent reads files directly (less accurate for complex docs)")
 
     has_watchdog, watchdog_detail = check_watchdog()
     print(f"  [{check_mark(has_watchdog):>7}]  watchdog           {watchdog_detail}")
     if not has_watchdog:
-        all_ok = False
-    print()
-
-    # Recommended
-    print("RECOMMENDED")
-    print("-" * 40)
+        print("           Install: pip install watchdog")
 
     ok, detail = check_obsidian()
     print(f"  [{check_mark(ok):>7}]  Obsidian           {detail}")
@@ -184,10 +180,11 @@ def main():
 
     print("=" * 60)
 
-    if all_ok:
-        print("All required dependencies are ready.")
+    if has_docling and has_watchdog:
+        print("All recommended dependencies are ready.")
     else:
-        print("Some required dependencies are missing. See above.")
+        print("Some recommended dependencies are missing. See above.")
+        print("The skill works without them, but with reduced capabilities.")
 
     print()
     print("To get started, ask your agent:")
