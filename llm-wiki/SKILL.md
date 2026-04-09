@@ -45,6 +45,7 @@ Raw Sources → Wiki Pages → Index/Schema
 <vault-root>/
 ├── .obsidian/              # Obsidian configuration
 ├── raw/                    # Immutable source documents (flat or organized — your choice)
+│   ├── extracted/          # Docling-extracted markdown versions of binary sources
 │   └── .manifest.json      # Tracks ingested sources (hash, timestamp, resulting pages)
 ├── wiki/                   # Synthesized knowledge pages
 │   ├── concepts/
@@ -67,12 +68,12 @@ The subdirectories under both `raw/` and `wiki/` are suggestions — users can d
 
 When the user asks to set up a new wiki or knowledge base:
 
-1. **Check dependencies** — before anything else, verify the current Python environment has the required packages:
+1. **Check dependencies** — before anything else, verify the current Python environment has the optional packages:
    ```python
    python3 -c "import docling; import watchdog; print('Dependencies OK')"
    ```
    - **If both imports succeed**: skip step 2 — use the current environment as-is.
-   - **If any import fails**: ask the user whether they'd like to install the missing dependencies into a new virtual environment. Do not install without confirmation.
+   - **If any import fails**: inform the user. These are optional — the skill works without them (the agent can read files directly and watch for changes manually). Ask whether they'd like to install into a virtual environment. Do not install without confirmation.
 2. **Set up a Python virtual environment** (only if step 1 failed and user agreed):
    ```bash
    python3 -m venv <vault-path>/.venv
@@ -149,8 +150,10 @@ A populated manifest entry looks like this — follow this schema exactly so cro
 {
   "sources": [
     {
-      "path": "raw/articles/microservices-design.md",
-      "snapshot": "raw/articles/microservices-design.snapshot.md",
+      "path": "raw/articles/microservices-design.pdf",
+      "extracted": "raw/extracted/microservices-design.pdf.md",
+      "snapshot": "raw/extracted/microservices-design.pdf.md.snapshot.md",
+      "extraction_method": "docling +ocr",
       "sha256": "a1b2c3d4e5f6...",
       "ingested_at": "2026-04-07T14:30:00Z",
       "size_bytes": 4523,
@@ -255,30 +258,81 @@ If an ingest or update operation would modify more than 10 existing wiki pages, 
 
 ## Document Extraction
 
-The wiki handles plain markdown, text, and code files natively. For all other formats (PDF, DOCX, PPTX, XLSX, images, HTML, and more), the [Docling](https://github.com/docling-project/docling) library is required.
+The wiki handles plain markdown, text, and code files natively. For all other formats (PDF, DOCX, PPTX, XLSX, images, HTML, and more), there are two extraction approaches. Extracted markdown files are stored in `raw/extracted/` — the originals in `raw/` are never modified.
 
-### Setup
+### Approach 1: Docling extraction (recommended for large or complex documents)
 
-Install Docling:
+Use the extraction script bundled with the skill. It uses [Docling](https://github.com/docling-project/docling) with optimized settings: accurate table structure recognition, OCR for scanned pages, and 2x image resolution.
 
 ```bash
 pip install docling
 ```
 
-### Usage
-
-Use the extraction script bundled with the skill (find it relative to this SKILL.md file):
-
 ```bash
+# Output goes to raw/extracted/<filename>.md by default
+python <skill-dir>/scripts/extract.py <input-file>
+
+# Or specify an explicit output path
 python <skill-dir>/scripts/extract.py <input-file> <output-markdown>
 ```
 
-The script auto-detects file type and routes to Docling for conversion. For plain text, markdown, and code files, it reads them directly without Docling.
+For native-text PDFs where OCR is unnecessary, disable it for faster processing:
 
-If `docling` is not installed and the user provides a non-text file, tell them what to install:
+```bash
+python <skill-dir>/scripts/extract.py --no-ocr <input-file>
+```
+
+The script auto-detects file type and routes to Docling for conversion. For plain text, markdown, and code files, it reads them directly without Docling. There is no hard file size limit — large files produce a warning but extraction proceeds.
+
+After extraction, record in the manifest:
+- `extracted`: path to the extracted file (e.g. `raw/extracted/report.pdf.md`)
+- `extraction_method`: `docling +ocr`, `docling`, or `fallback`
+
+### Approach 2: Agent direct reading (fallback)
+
+If Docling is not installed, produces unsatisfactory results, or the user prefers it, **the agent can read the source file directly** using its built-in file reading capability. Many AI agents can natively read PDFs and images. In this mode:
+
+1. Copy the source file into `raw/` as-is (no conversion step)
+2. Read the file directly using the agent's file reading tool
+3. Synthesize wiki pages from what you read
+4. Record `extraction_method: agent` in the manifest entry (no `extracted` field)
+
+This is the simplest approach and requires no Python dependencies. It works well for short documents, clean PDFs, and when the agent's native file reading is sufficient. It is less reliable for scanned documents, complex table layouts, or very large files where Docling's dedicated parsing pipeline produces better results.
+
+### Which approach to use
+
+- **Docling** when: the document has complex tables, multi-column layouts, scanned/image-based pages, or is very large. Also when you need consistent, reproducible extraction across sessions.
+- **Agent direct reading** when: Docling is not installed, the document is short and clean, or the user asks you to read the file directly.
+- If Docling extraction produces poor results for a specific file, fall back to agent direct reading for that file and note it in the log.
+
+If neither approach is available (no Docling, agent cannot read the format), tell the user what to install:
 
 > I need the Docling library to extract text from this .docx file. Install it with:
 > `pip install docling`
+
+### Scanning for extraction work
+
+Use the scan script to find files that need extraction, retry failed extractions, or re-extract low-quality results:
+
+```bash
+# One-shot scan — reports what needs attention
+python <skill-dir>/scripts/scan.py <vault-path>
+
+# JSON output for agent consumption
+python <skill-dir>/scripts/scan.py <vault-path> --json
+
+# Periodic scanning (every 5 minutes)
+python <skill-dir>/scripts/scan.py <vault-path> --watch 300
+
+# Scan and automatically extract all findings
+python <skill-dir>/scripts/scan.py <vault-path> --auto-extract
+```
+
+The scan detects:
+- **New files**: in `raw/` but not in `.manifest.json` and not yet extracted
+- **Failed extractions**: in manifest but extracted file is missing
+- **Low quality**: extracted file is suspiciously small relative to source (<1% size ratio or nearly empty)
+- **Modified sources**: file hash differs from what's recorded in manifest
 
 ---
 
@@ -356,8 +410,9 @@ The wiki automatically detects and ingests changes — the user just drops files
 At the start of each conversation where the wiki is in scope, scan for changes and **ingest them automatically**:
 
 1. **Pending changes from file watcher** — if `raw/.pending_changes.json` exists and has entries, ingest them. Clear the file after processing.
-2. **New files in `raw/`** not yet in `.manifest.json` → ingest them
-3. **Modified sources** (compare file hashes to `.manifest.json`) → re-ingest them using diff-based processing
+2. **New files in `raw/`** not yet in `.manifest.json` → extract (if binary format) and ingest them. Extracted markdown goes to `raw/extracted/`.
+3. **Modified sources** (compare file hashes to `.manifest.json`) → re-extract and re-ingest them using diff-based processing
+4. **Failed or low-quality extractions** — if a file in the manifest has no extracted file or an unusually small one, retry extraction. You can run `python <skill-dir>/scripts/scan.py <vault-path> --json` to get a structured report of all extraction issues.
 
 Briefly report what was processed:
 
@@ -499,6 +554,7 @@ Key points:
 
 - `references/schema.md` — Default page templates and frontmatter conventions
 - `references/obsidian.md` — Obsidian operating reference: URI scheme, CLI commands, flavored markdown syntax, vault config, recommended plugins, and retrieval patterns
-- `scripts/extract.py` — Document extraction using Docling (optional dependency)
+- `scripts/extract.py` — Document extraction using Docling (optional dependency). Output goes to `raw/extracted/` by default.
+- `scripts/scan.py` — Scans `raw/` for new, failed, or low-quality extractions. Supports periodic scanning and auto-extraction.
 - `scripts/diff_sources.py` — Structured diff between source versions for incremental re-ingestion
 - `scripts/watch.py` — Cross-platform file watcher for continuous change detection (requires `watchdog`)

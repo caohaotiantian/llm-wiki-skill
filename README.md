@@ -31,6 +31,7 @@ You feed it source documents — markdown, PDFs, Word docs, PowerPoint, spreadsh
 my-wiki/
 ├── .obsidian/           # Obsidian recognizes this as a vault
 ├── raw/                 # Immutable source documents (the ground truth)
+│   ├── extracted/       # Docling-extracted markdown versions of binary sources
 │   ├── .manifest.json   # Tracks ingested sources with SHA-256 hashes
 │   └── *.snapshot.md    # Snapshots for diff-based re-ingestion
 ├── wiki/                # Synthesized knowledge pages
@@ -93,11 +94,11 @@ python3 scripts/check-deps.py
 
 **Required:**
 - An AI coding agent that supports skills (Claude Code, Codex, Gemini CLI, etc.)
-- Python 3.10+
-- [`docling`](https://github.com/docling-project/docling) — for document extraction (PDF, DOCX, PPTX, XLSX, HTML, images, and more). Install with `pip install docling`.
-- [`watchdog`](https://github.com/gorakhargosh/watchdog) — for the file watcher. Install with `pip install watchdog`.
 
 **Recommended:**
+- Python 3.10+ — needed for the extraction and file watcher scripts below
+- [`docling`](https://github.com/docling-project/docling) — for high-quality document extraction (PDF, DOCX, PPTX, XLSX, HTML, images, and more). Install with `pip install docling`. Without it, the agent can still read files directly using its built-in capabilities.
+- [`watchdog`](https://github.com/gorakhargosh/watchdog) — for the file watcher. Install with `pip install watchdog`.
 - Obsidian — for graph view, search, and Dataview queries. The skill works without it (it's just markdown files), but Obsidian makes the wiki much more useful.
 
 ## Project Structure
@@ -111,6 +112,7 @@ llm-wiki-skill/
 │   │   └── obsidian.md      # Obsidian operating reference (URI, CLI, markdown)
 │   └── scripts/
 │       ├── extract.py       # Document extraction (optional Docling integration)
+│       ├── scan.py          # Scan raw/ for new, failed, or low-quality extractions
 │       ├── diff_sources.py  # Structured diff for incremental re-ingestion
 │       └── watch.py         # Cross-platform file watcher (requires watchdog)
 ├── scripts/

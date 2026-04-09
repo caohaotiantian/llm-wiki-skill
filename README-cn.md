@@ -31,6 +31,7 @@
 my-wiki/
 ├── .obsidian/           # Obsidian 将此识别为仓库
 ├── raw/                 # 不可变的源文档（真实数据来源）
+│   ├── extracted/       # Docling 提取的 Markdown 版本（针对二进制格式）
 │   ├── .manifest.json   # 使用 SHA-256 哈希追踪已摄入的源文档
 │   └── *.snapshot.md    # 用于差异化重新摄入的快照
 ├── wiki/                # 综合生成的知识页面
@@ -93,11 +94,11 @@ python3 scripts/check-deps.py
 
 **必需：**
 - 支持技能的 AI 编程智能体（Claude Code、Codex、Gemini CLI 等）
-- Python 3.10+
-- [`docling`](https://github.com/docling-project/docling) — 用于文档提取（PDF、DOCX、PPTX、XLSX、HTML、图片等）。安装：`pip install docling`
-- [`watchdog`](https://github.com/gorakhargosh/watchdog) — 用于文件监控。安装：`pip install watchdog`
 
 **推荐：**
+- Python 3.10+ — 运行文档提取和文件监控脚本所需
+- [`docling`](https://github.com/docling-project/docling) — 用于高质量文档提取（PDF、DOCX、PPTX、XLSX、HTML、图片等）。安装：`pip install docling`。未安装时，智能体仍可使用内置能力直接读取文件。
+- [`watchdog`](https://github.com/gorakhargosh/watchdog) — 用于文件监控。安装：`pip install watchdog`
 - Obsidian — 用于图谱视图、搜索和 Dataview 查询。没有它也能正常工作（本质上只是 Markdown 文件），但 Obsidian 能让 wiki 更好用。
 
 ## 项目结构
@@ -111,6 +112,7 @@ llm-wiki-skill/
 │   │   └── obsidian.md      # Obsidian 操作参考（URI、CLI、Markdown）
 │   └── scripts/
 │       ├── extract.py       # 文档提取（可选 Docling 集成）
+│       ├── scan.py          # 扫描 raw/ 发现新增、失败或低质量的提取
 │       ├── diff_sources.py  # 用于增量重新摄入的结构化差异
 │       └── watch.py         # 跨平台文件监控（需要 watchdog）
 ├── scripts/

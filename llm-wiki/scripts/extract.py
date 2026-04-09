@@ -5,26 +5,59 @@ Extract text content from documents into markdown.
 Requires: pip install docling
 
 Usage:
-    python extract.py <input-file> <output-markdown>
-    python extract.py document.pdf output.md
-    python extract.py report.docx output.md
+    python extract.py <input-file>                     # output to raw/extracted/
+    python extract.py <input-file> <output-markdown>   # explicit output path
+    python extract.py --ocr document.pdf
+    python extract.py --no-ocr slides.pptx
 """
 
+import argparse
 import sys
 import os
 
 
-def extract_with_docling(input_path: str) -> str:
-    """Extract text using the docling library."""
-    from docling.document_converter import DocumentConverter
+def extract_with_docling(input_path: str, ocr: bool = True) -> str:
+    """Extract text using the docling library with optimized settings."""
+    from docling.document_converter import DocumentConverter, PdfFormatOption
+    from docling.datamodel.base_models import InputFormat
+    from docling.datamodel.pipeline_options import (
+        PdfPipelineOptions,
+        TableStructureOptions,
+        TableFormerMode,
+    )
 
-    converter = DocumentConverter()
+    ext = os.path.splitext(input_path)[1].lower()
+
+    # Configure PDF pipeline for best quality
+    pdf_options = PdfPipelineOptions()
+    pdf_options.do_ocr = ocr
+    pdf_options.do_table_structure = True
+    pdf_options.table_structure_options = TableStructureOptions(
+        do_cell_matching=True,
+        mode=TableFormerMode.ACCURATE,
+    )
+    # Extract embedded pictures so markdown can reference them
+    pdf_options.generate_picture_images = True
+    pdf_options.images_scale = 2.0
+
+    format_options = {
+        InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options),
+    }
+
+    # Images use the same PDF pipeline internally
+    if ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"):
+        from docling.document_converter import ImageFormatOption
+        format_options[InputFormat.IMAGE] = ImageFormatOption(
+            pipeline_options=pdf_options,
+        )
+
+    converter = DocumentConverter(format_options=format_options)
     result = converter.convert(input_path)
     return result.document.export_to_markdown()
 
 
 def extract_fallback(input_path: str) -> str:
-    """Fallback extraction for common formats without docling."""
+    """Fallback extraction for common text/code formats without docling."""
     ext = os.path.splitext(input_path)[1].lower()
 
     if ext in (".md", ".txt", ".csv", ".json", ".xml", ".yaml", ".yml"):
@@ -42,55 +75,100 @@ def extract_fallback(input_path: str) -> str:
     )
 
 
-def main():
-    if len(sys.argv) != 3:
-        print(f"Usage: {sys.argv[0]} <input-file> <output-markdown>")
-        sys.exit(1)
+# Extensions that are handled natively (no docling needed)
+TEXT_EXTENSIONS = {".md", ".txt", ".csv", ".json", ".xml", ".yaml", ".yml"}
+CODE_EXTENSIONS = {".py", ".js", ".ts", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".rb", ".sh"}
+NATIVE_EXTENSIONS = TEXT_EXTENSIONS | CODE_EXTENSIONS
 
-    input_path = sys.argv[1]
-    output_path = sys.argv[2]
+
+def default_output_path(input_path: str) -> str:
+    """Derive default output path: raw/extracted/<filename>.md"""
+    input_dir = os.path.dirname(os.path.abspath(input_path))
+    filename = os.path.basename(input_path)
+
+    # Walk up to find raw/ directory
+    check_dir = input_dir
+    while check_dir and check_dir != os.path.dirname(check_dir):
+        if os.path.basename(check_dir) == "raw":
+            extracted_dir = os.path.join(check_dir, "extracted")
+            os.makedirs(extracted_dir, exist_ok=True)
+            return os.path.join(extracted_dir, filename + ".md")
+        check_dir = os.path.dirname(check_dir)
+
+    # Fallback: put extracted/ next to the input file
+    extracted_dir = os.path.join(input_dir, "extracted")
+    os.makedirs(extracted_dir, exist_ok=True)
+    return os.path.join(extracted_dir, filename + ".md")
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Extract text content from documents into markdown."
+    )
+    parser.add_argument("input", help="Input file path")
+    parser.add_argument(
+        "output", nargs="?", default=None,
+        help="Output markdown file path (default: raw/extracted/<filename>.md)",
+    )
+
+    ocr_group = parser.add_mutually_exclusive_group()
+    ocr_group.add_argument(
+        "--ocr", action="store_true", default=True,
+        help="Enable OCR for scanned documents (default)",
+    )
+    ocr_group.add_argument(
+        "--no-ocr", action="store_true",
+        help="Disable OCR (faster, for native-text PDFs)",
+    )
+
+    args = parser.parse_args()
+    input_path = args.input
+    output_path = args.output
+    ocr = not args.no_ocr
 
     if not os.path.exists(input_path):
         print(f"Error: {input_path} not found")
         sys.exit(1)
 
+    ext = os.path.splitext(input_path)[1].lower()
+
+    # Text/code files don't need extraction — read directly
+    if ext in NATIVE_EXTENSIONS:
+        if output_path is None:
+            output_path = default_output_path(input_path)
+
+        output_dir = os.path.dirname(output_path)
+        if output_dir and not os.path.isdir(output_dir):
+            os.makedirs(output_dir, exist_ok=True)
+
+        content = extract_fallback(input_path)
+        filename = os.path.basename(input_path)
+        header = f"# Extracted: {filename}\n\n> Extraction method: fallback\n\n"
+        with open(output_path, "w", encoding="utf-8") as f:
+            f.write(header + content)
+        print(f"Extracted {input_path} -> {output_path} (method: fallback)")
+        return
+
+    # For all other formats, use Docling
+    if output_path is None:
+        output_path = default_output_path(input_path)
+
     output_dir = os.path.dirname(output_path)
     if output_dir and not os.path.isdir(output_dir):
-        print(f"Error: Output directory {output_dir} does not exist")
-        sys.exit(1)
+        os.makedirs(output_dir, exist_ok=True)
 
-    # Warn on large files (>100MB) that could cause memory issues
+    # Warn on large files but still attempt extraction
     file_size = os.path.getsize(input_path)
-    max_size = 100 * 1024 * 1024  # 100MB
-    if file_size > max_size:
-        print(f"Warning: {input_path} is {file_size / 1024 / 1024:.0f}MB.")
-        print(f"Files over 100MB may cause memory issues during extraction.")
-        print(f"Consider splitting the file or extracting manually.")
-        sys.exit(1)
+    if file_size > 100 * 1024 * 1024:
+        print(
+            f"Warning: {input_path} is {file_size / 1024 / 1024:.0f}MB. "
+            f"Extraction may be slow and use significant memory.",
+            file=sys.stderr,
+        )
 
-    # Try plain text/code formats first (no dependencies needed)
-    ext = os.path.splitext(input_path)[1].lower()
-    text_extensions = {".md", ".txt", ".csv", ".json", ".xml", ".yaml", ".yml"}
-    code_extensions = {".py", ".js", ".ts", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".rb", ".sh"}
-
-    if ext in text_extensions or ext in code_extensions:
-        try:
-            content = extract_fallback(input_path)
-            method = "fallback"
-        except ValueError:
-            pass
-        else:
-            filename = os.path.basename(input_path)
-            header = f"# Extracted: {filename}\n\n> Extraction method: {method}\n\n"
-            with open(output_path, "w", encoding="utf-8") as f:
-                f.write(header + content)
-            print(f"Extracted {input_path} -> {output_path} (method: {method})")
-            return
-
-    # For all other formats, use Docling (required)
     try:
-        content = extract_with_docling(input_path)
-        method = "docling"
+        content = extract_with_docling(input_path, ocr=ocr)
+        method = "docling" + (" +ocr" if ocr else "")
     except ImportError:
         print(f"Error: The 'docling' library is required for {ext} files.")
         print("Install it with: pip install docling")
