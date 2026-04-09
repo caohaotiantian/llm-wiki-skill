@@ -272,12 +272,16 @@ def resolve_links(
             if norm_target in by_alias:
                 target_file = by_alias[norm_target]
                 target_stem = os.path.splitext(os.path.basename(target_file))[0]
+                # Preserve display text if the link already has pipe syntax
+                raw = link["raw"]
+                display = raw.split("|", 1)[1] if "|" in raw else link["target"]
                 alias_mismatches.append({
                     "file": rel_path,
                     "line": link["line"],
                     "link": link["target"],
+                    "raw": raw,
                     "target_file": target_file,
-                    "suggested": f"[[{target_stem}|{link['target']}]]",
+                    "suggested": f"[[{target_stem}|{display}]]",
                 })
                 continue
 
@@ -332,16 +336,26 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
     for rel_path, file_mismatches in by_file.items():
         abs_path = os.path.join(str(vault_path), rel_path)
         try:
-            with open(abs_path, "r", encoding="utf-8") as f:
+            with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
                 lines = f.readlines()
         except OSError:
             continue
 
-        # Build replacement map: alias text → new link text
-        replacements: dict[str, str] = {}
+        # Build replacement map: alias text → (compiled pattern, target stem)
+        # Pattern matches both [[alias]] and [[alias|display text]]
+        # (?<!!) prevents matching embeds like ![[alias]]
+        compiled: dict[str, tuple] = {}
         for m in file_mismatches:
-            target_stem = os.path.splitext(os.path.basename(m["target_file"]))[0]
-            replacements[m["link"]] = target_stem
+            alias_text = m["link"]
+            if alias_text not in compiled:
+                target_stem = os.path.splitext(os.path.basename(m["target_file"]))[0]
+                pattern = re.compile(
+                    r"(?<!!)\[\["
+                    + re.escape(alias_text)
+                    + r"(\|[^\]]+)?"  # optional display text
+                    + r"\]\]"
+                )
+                compiled[alias_text] = (pattern, target_stem)
 
         new_lines = []
         in_frontmatter = False
@@ -388,14 +402,13 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
                     # Inline code span — leave untouched
                     modified_parts.append(part)
                 else:
-                    # Apply replacements using regex for exact bare [[alias]]
-                    # (?<!!) prevents matching embeds like ![[alias]]
-                    for alias_text, target_stem in replacements.items():
-                        pattern = re.compile(
-                            r"(?<!!)\[\[" + re.escape(alias_text) + r"\]\]"
-                        )
-                        new_link = f"[[{target_stem}|{alias_text}]]"
-                        part, count = pattern.subn(new_link, part)
+                    for alias_text, (pattern, target_stem) in compiled.items():
+                        def _replacer(m, _stem=target_stem, _alias=alias_text):
+                            display = m.group(1)  # "|display text" or None
+                            if display:
+                                return f"[[{_stem}{display}]]"
+                            return f"[[{_stem}|{_alias}]]"
+                        part, count = pattern.subn(_replacer, part)
                         fixes_applied += count
                     modified_parts.append(part)
             modified = "".join(modified_parts)
@@ -435,7 +448,10 @@ def print_report(report: dict, json_output: bool = False) -> None:
         print()
 
     if report["missing"]:
-        print(f"MISSING PAGES ({len(report['missing'])}):")
+        unique = len(report['missing'])
+        occur = summary['missing']
+        label = f"{unique} target{'s' if unique != 1 else ''}, {occur} occurrence{'s' if occur != 1 else ''}"
+        print(f"MISSING PAGES ({label}):")
         for m in report["missing"]:
             refs = ", ".join(m["referenced_from"][:3])
             suffix = f" (+{len(m['referenced_from']) - 3} more)" if len(m["referenced_from"]) > 3 else ""

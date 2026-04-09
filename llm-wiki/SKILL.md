@@ -289,7 +289,7 @@ Process the results:
 - **`missing`**: Create stub pages (`status: stub`) for each missing target using the template from Step 4, then re-run validation to confirm all links resolve
 - Only append the `log.md` entry (deferred from Step 5) **after** validation passes (the `clean` field in JSON output is `true`)
 
-This step catches two common issues: links that use an alias instead of the canonical filename (which Obsidian cannot resolve), and forward-references to pages that were mentioned but never created.
+This step catches two common issues: links that use an alias instead of the canonical filename (which Obsidian cannot resolve), and forward-references to pages that were mentioned but never created. Note: `--fix` with `--files` only repairs links in the specified files. For a complete vault-wide fix, run without `--files` or follow up with a vault-wide lint.
 
 ### Batch ingestion
 
