@@ -286,7 +286,6 @@ def resolve_links(
                 continue
 
             # Phase 3: Unresolved
-            missing_occurrences += 1
             if norm_target not in missing_links:
                 missing_links[norm_target] = {
                     "link": link["target"],
@@ -295,6 +294,7 @@ def resolve_links(
             ref_entry = f"{rel_path}:{link['line']}"
             if ref_entry not in missing_links[norm_target]["referenced_from"]:
                 missing_links[norm_target]["referenced_from"].append(ref_entry)
+                missing_occurrences += 1
 
     missing_list = [
         {
@@ -341,21 +341,35 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
         except OSError:
             continue
 
-        # Build replacement map: alias text → (compiled pattern, target stem)
-        # Pattern matches both [[alias]] and [[alias|display text]]
-        # (?<!!) prevents matching embeds like ![[alias]]
-        compiled: dict[str, tuple] = {}
+        # Build replacement list from raw wikilink content.
+        # Uses raw content (including #heading) so heading links are matched.
+        # (?<!!) prevents matching embeds.
+        compiled: list[tuple] = []
+        seen_raws: set[str] = set()
         for m in file_mismatches:
-            alias_text = m["link"]
-            if alias_text not in compiled:
-                target_stem = os.path.splitext(os.path.basename(m["target_file"]))[0]
-                pattern = re.compile(
-                    r"(?<!!)\[\["
-                    + re.escape(alias_text)
-                    + r"(\|[^\]]+)?"  # optional display text
-                    + r"\]\]"
-                )
-                compiled[alias_text] = (pattern, target_stem)
+            raw = m.get("raw", m["link"])
+            # Deduplicate by raw content (same raw = same pattern)
+            raw_base = raw.split("|")[0]  # target part (may include #heading)
+            if raw_base in seen_raws:
+                continue
+            seen_raws.add(raw_base)
+
+            target_stem = os.path.splitext(os.path.basename(m["target_file"]))[0]
+            # Extract heading/block suffix to preserve in replacement
+            heading = ""
+            if "#" in raw_base:
+                alias_part, heading = raw_base.split("#", 1)
+                heading = "#" + heading
+            else:
+                alias_part = raw_base
+
+            pattern = re.compile(
+                r"(?<!!)\[\["
+                + re.escape(raw_base)          # e.g. "AI" or "AI#Introduction"
+                + r"(\|[^\]]+)?"               # optional display text
+                + r"\]\]"
+            )
+            compiled.append((pattern, target_stem, heading, alias_part))
 
         new_lines = []
         in_frontmatter = False
@@ -402,14 +416,18 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
                     # Inline code span — leave untouched
                     modified_parts.append(part)
                 else:
-                    for alias_text, (pattern, target_stem) in compiled.items():
-                        def _replacer(m, _stem=target_stem, _alias=alias_text):
+                    for pattern, target_stem, heading, alias_part in compiled:
+                        def _replacer(m, _stem=target_stem, _heading=heading,
+                                      _alias=alias_part):
                             display = m.group(1)  # "|display text" or None
                             if display:
-                                return f"[[{_stem}{display}]]"
-                            return f"[[{_stem}|{_alias}]]"
-                        part, count = pattern.subn(_replacer, part)
-                        fixes_applied += count
+                                return f"[[{_stem}{_heading}{display}]]"
+                            return f"[[{_stem}{_heading}|{_alias}]]"
+                        new_part, count = pattern.subn(_replacer, part)
+                        if count > 0:
+                            part = new_part
+                            fixes_applied += count
+                            break  # one pattern per match — avoid chained corruption
                     modified_parts.append(part)
             modified = "".join(modified_parts)
 
