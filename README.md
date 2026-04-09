@@ -16,7 +16,7 @@ You feed it source documents — markdown, PDFs, Word docs, PowerPoint, spreadsh
 |-----------|-------------|
 | **Ingest** | Process source documents into synthesized, cross-referenced wiki pages |
 | **Query** | Search the wiki and synthesize answers with citations |
-| **Lint** | Health check — find dead links, orphans, stale content, contradictions |
+| **Lint** | Health check — find dead links, alias mismatches, orphans, stale content, contradictions |
 
 **What makes the wiki compound:**
 
@@ -59,6 +59,7 @@ my-wiki/
 - **Session scoping** — Prevents infinite reprocessing loops across conversations
 - **Optional Docling integration** — Extract text from PDFs, DOCX, PPTX, XLSX, HTML, images, and more
 - **Periodic scanning** — Detect new, failed, or low-quality extractions; retry automatically
+- **Link validation** — Detects alias mismatches (`[[alias]]` that should be `[[filename|alias]]`) and missing link targets. Auto-fix rewrites aliases to correct pipe syntax, preserving display text and heading anchors. Runs as post-ingest validation and during lint.
 
 ## Installation
 
@@ -121,6 +122,7 @@ Karpathy's [original gist](https://gist.github.com/karpathy/442a6bf555914893e989
 | Page type taxonomy | Loosely mentioned | Five starter templates (concepts, entities, topics, sources, queries); taxonomy emerges from content |
 | Provenance markers | Not covered | Inline footnotes: `^[extracted]`, `^[inferred]`, `^[ambiguous]` |
 | Obsidian integration | Tips only | Full reference: URI scheme, CLI commands, vault config, plugins |
+| Link validation | Not covered | Detects alias mismatches and missing pages; auto-fix with `--fix` |
 
 The gist also suggests features this project does not yet cover: dedicated search tooling (e.g. [qmd](https://github.com/tobi/qmd)) for large wikis, and varied output formats (Marp slide decks, matplotlib charts).
 
