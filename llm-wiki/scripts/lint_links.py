@@ -136,9 +136,13 @@ def build_resolution_index(vault_path: Path) -> dict:
                 for alias in parse_frontmatter_aliases(content):
                     norm_alias = normalize_for_matching(alias)
                     if norm_alias:
-                        # Don't overwrite — first alias registration wins
                         if norm_alias not in by_alias:
                             by_alias[norm_alias] = rel_path
+                        elif by_alias[norm_alias] != rel_path:
+                            print(f"Warning: duplicate alias '{alias}' — "
+                                  f"{by_alias[norm_alias]} and {rel_path}. "
+                                  f"First registration wins.",
+                                  file=sys.stderr)
 
     return {"by_filename": by_filename, "by_alias": by_alias}
 
@@ -272,8 +276,13 @@ def resolve_links(
             if norm_target in by_alias:
                 target_file = by_alias[norm_target]
                 target_stem = os.path.splitext(os.path.basename(target_file))[0]
-                # Preserve display text if the link already has pipe syntax
+                # Preserve heading/block ref and display text from raw link
                 raw = link["raw"]
+                raw_base = raw.split("|")[0]  # target part (may include #heading)
+                heading = ""
+                if "#" in raw_base:
+                    _, h = raw_base.split("#", 1)
+                    heading = "#" + h
                 display = raw.split("|", 1)[1] if "|" in raw else link["target"]
                 alias_mismatches.append({
                     "file": rel_path,
@@ -281,7 +290,7 @@ def resolve_links(
                     "link": link["target"],
                     "raw": raw,
                     "target_file": target_file,
-                    "suggested": f"[[{target_stem}|{display}]]",
+                    "suggested": f"[[{target_stem}{heading}|{display}]]",
                 })
                 continue
 
@@ -462,7 +471,8 @@ def print_report(report: dict, json_output: bool = False) -> None:
     if report["alias_mismatches"]:
         print(f"ALIAS MISMATCHES ({len(report['alias_mismatches'])}):")
         for m in report["alias_mismatches"]:
-            print(f"  {m['file']}:{m['line']}  [[{m['link']}]]  →  {m['suggested']}")
+            raw = m.get('raw', m['link'])
+            print(f"  {m['file']}:{m['line']}  [[{raw}]]  →  {m['suggested']}")
         print()
 
     if report["missing"]:
