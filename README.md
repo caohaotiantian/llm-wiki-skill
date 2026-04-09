@@ -31,16 +31,9 @@ You feed it source documents — markdown, PDFs, Word docs, PowerPoint, spreadsh
 my-wiki/
 ├── .obsidian/           # Obsidian recognizes this as a vault
 ├── raw/                 # Immutable source documents (the ground truth)
-│   ├── extracted/       # Docling-extracted markdown (+ snapshots for binary sources)
-│   ├── .manifest.json   # Tracks ingested sources with SHA-256 hashes
-│   └── *.snapshot.md    # Snapshots for diff-based re-ingestion (text sources)
-├── wiki/                # Synthesized knowledge pages
-│   ├── concepts/        # Ideas, patterns, methodologies
-│   ├── entities/        # People, orgs, systems, products
-│   ├── topics/          # Broad subjects tying concepts together
-│   ├── sources/         # Source summary pages
-│   └── queries/         # Filed query answers (cross-cutting analyses)
-├── outputs/reports/     # Lint reports and generated artifacts
+│   ├── extracted/       # Docling-extracted markdown versions of binary sources
+│   └── .manifest.json   # Tracks ingested sources with SHA-256 hashes
+├── wiki/                # Synthesized knowledge pages (taxonomy emerges from content)
 ├── index.md             # Auto-maintained page catalog
 ├── log.md               # Append-only operation history
 └── schema.md            # Wiki conventions and templates
@@ -65,7 +58,7 @@ my-wiki/
 - **Scaling guidance** — Strategies for 100+ sources / 500+ pages (index splitting, targeted lint, log rotation)
 - **Session scoping** — Prevents infinite reprocessing loops across conversations
 - **Optional Docling integration** — Extract text from PDFs, DOCX, PPTX, XLSX, HTML, images, and more
-- **File watcher** — Cross-platform monitoring of raw sources for changes (requires `watchdog`)
+- **Periodic scanning** — Detect new, failed, or low-quality extractions; retry automatically
 
 ## Installation
 
@@ -86,19 +79,12 @@ Then ask Claude: *"Set up a knowledge base wiki in ./my-wiki and ingest these do
 
 ## Dependencies
 
-Run the dependency checker to see what's available:
-
-```bash
-python3 scripts/check-deps.py
-```
-
 **Required:**
 - An AI coding agent that supports skills (Claude Code, Codex, Gemini CLI, etc.)
 
 **Recommended:**
-- Python 3.10+ — needed for the extraction and file watcher scripts below
+- Python 3.10+ — needed for the extraction and scanning scripts
 - [`docling`](https://github.com/docling-project/docling) — for high-quality document extraction (PDF, DOCX, PPTX, XLSX, HTML, images, and more). Install with `pip install docling`. Without it, the agent can still read files directly using its built-in capabilities.
-- [`watchdog`](https://github.com/gorakhargosh/watchdog) — for the file watcher. Install with `pip install watchdog`.
 - Obsidian — for graph view, search, and Dataview queries. The skill works without it (it's just markdown files), but Obsidian makes the wiki much more useful.
 
 ## Project Structure
@@ -113,10 +99,7 @@ llm-wiki-skill/
 │   └── scripts/
 │       ├── extract.py       # Document extraction (optional Docling integration)
 │       ├── scan.py          # Scan raw/ for new, failed, or low-quality extractions
-│       ├── diff_sources.py  # Structured diff for incremental re-ingestion
-│       └── watch.py         # Cross-platform file watcher (requires watchdog)
-├── scripts/
-│   └── check-deps.py        # Dependency checker
+│       └── diff_sources.py  # Structured diff for incremental re-ingestion
 ├── INSTALL.md               # Installation instructions for all agent platforms
 ├── LICENSE                  # MIT
 └── README.md                # This file
@@ -129,12 +112,12 @@ Karpathy's [original gist](https://gist.github.com/karpathy/442a6bf555914893e989
 | Capability | Karpathy's Gist | This Project |
 |---|---|---|
 | Document extraction (PDF, DOCX, PPTX, images, ...) | User handles manually (e.g. Obsidian Web Clipper) | Built-in via [Docling](https://github.com/docling-project/docling) |
-| Change detection | Not covered | File watcher + SHA-256 hash tracking in `.manifest.json` |
+| Change detection | Not covered | Periodic scanning + SHA-256 hash tracking in `.manifest.json` |
 | Incremental re-ingestion | Not covered | Section-level structured diffs — only changed parts are reprocessed |
 | Source-to-page dependency tracking | Not covered | `.manifest.json` maps each source to the wiki pages it produced |
 | Mass update safeguard | Not covered | Pauses for confirmation when >10 existing pages would be modified |
 | Session scoping | Not covered | Prevents infinite reprocessing loops across conversations |
-| Page type taxonomy | Loosely mentioned | Five structured types: concepts, entities, topics, sources, queries |
+| Page type taxonomy | Loosely mentioned | Five starter templates (concepts, entities, topics, sources, queries); taxonomy emerges from content |
 | Provenance markers | Not covered | Inline footnotes: `^[extracted]`, `^[inferred]`, `^[ambiguous]` |
 | Obsidian integration | Tips only | Full reference: URI scheme, CLI commands, vault config, plugins |
 

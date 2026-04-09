@@ -31,16 +31,9 @@
 my-wiki/
 ├── .obsidian/           # Obsidian 将此识别为仓库
 ├── raw/                 # 不可变的源文档（真实数据来源）
-│   ├── extracted/       # Docling 提取的 Markdown（+ 二进制源文档的快照）
-│   ├── .manifest.json   # 使用 SHA-256 哈希追踪已摄入的源文档
-│   └── *.snapshot.md    # 用于差异化重新摄入的快照（文本源文档）
-├── wiki/                # 综合生成的知识页面
-│   ├── concepts/        # 概念、模式、方法论
-│   ├── entities/        # 人物、组织、系统、产品
-│   ├── topics/          # 将概念联系在一起的主题
-│   ├── sources/         # 源文档摘要页
-│   └── queries/         # 归档的查询结果（跨领域分析）
-├── outputs/reports/     # 检查报告和生成的产物
+│   ├── extracted/       # Docling 提取的 Markdown 版本（针对二进制格式）
+│   └── .manifest.json   # 使用 SHA-256 哈希追踪已摄入的源文档
+├── wiki/                # 综合生成的知识页面（分类从内容中自然产生）
 ├── index.md             # 自动维护的页面目录
 ├── log.md               # 仅追加的操作历史
 └── schema.md            # Wiki 规范和模板
@@ -65,7 +58,7 @@ my-wiki/
 - **扩展指南** — 针对 100+ 源文档 / 500+ 页面的策略（索引拆分、定向检查、日志轮转）
 - **会话作用域** — 防止跨对话的无限重复处理循环
 - **可选 Docling 集成** — 从 PDF、DOCX、PPTX、XLSX、HTML、图片等格式提取文本
-- **文件监控** — 跨平台监控源文档目录的变更（需要 `watchdog`）
+- **周期性扫描** — 检测新增、失败或低质量的提取，自动重试
 
 ## 安装
 
@@ -86,19 +79,12 @@ cp -r llm-wiki-skill/llm-wiki .claude/skills/llm-wiki
 
 ## 依赖
 
-运行依赖检查器查看当前环境：
-
-```bash
-python3 scripts/check-deps.py
-```
-
 **必需：**
 - 支持技能的 AI 编程智能体（Claude Code、Codex、Gemini CLI 等）
 
 **推荐：**
-- Python 3.10+ — 运行文档提取和文件监控脚本所需
+- Python 3.10+ — 运行文档提取和扫描脚本所需
 - [`docling`](https://github.com/docling-project/docling) — 用于高质量文档提取（PDF、DOCX、PPTX、XLSX、HTML、图片等）。安装：`pip install docling`。未安装时，智能体仍可使用内置能力直接读取文件。
-- [`watchdog`](https://github.com/gorakhargosh/watchdog) — 用于文件监控。安装：`pip install watchdog`
 - Obsidian — 用于图谱视图、搜索和 Dataview 查询。没有它也能正常工作（本质上只是 Markdown 文件），但 Obsidian 能让 wiki 更好用。
 
 ## 项目结构
@@ -113,10 +99,7 @@ llm-wiki-skill/
 │   └── scripts/
 │       ├── extract.py       # 文档提取（可选 Docling 集成）
 │       ├── scan.py          # 扫描 raw/ 发现新增、失败或低质量的提取
-│       ├── diff_sources.py  # 用于增量重新摄入的结构化差异
-│       └── watch.py         # 跨平台文件监控（需要 watchdog）
-├── scripts/
-│   └── check-deps.py        # 依赖检查器
+│       └── diff_sources.py  # 用于增量重新摄入的结构化差异
 ├── INSTALL.md               # 各平台安装说明
 ├── LICENSE                  # MIT
 └── README.md                # 英文说明
@@ -129,12 +112,12 @@ Karpathy 的[原始 gist](https://gist.github.com/karpathy/442a6bf555914893e9891
 | 能力 | Karpathy 的 Gist | 本项目 |
 |------|------------------|--------|
 | 文档提取（PDF、DOCX、PPTX、图片等） | 用户手动处理（如 Obsidian Web Clipper） | 通过 [Docling](https://github.com/docling-project/docling) 内置支持 |
-| 变更检测 | 未涉及 | 文件监控 + `.manifest.json` 中的 SHA-256 哈希追踪 |
+| 变更检测 | 未涉及 | 周期性扫描 + `.manifest.json` 中的 SHA-256 哈希追踪 |
 | 增量重新摄入 | 未涉及 | 章节级结构化差异——仅重新处理变更部分 |
 | 源文档到页面的依赖追踪 | 未涉及 | `.manifest.json` 记录每个源文档生成了哪些 wiki 页面 |
 | 批量更新保护 | 未涉及 | 当超过 10 个现有页面将被修改时暂停确认 |
 | 会话作用域 | 未涉及 | 防止跨对话的无限重复处理循环 |
-| 页面类型分类 | 粗略提及 | 五种结构化类型：concepts、entities、topics、sources、queries |
+| 页面类型分类 | 粗略提及 | 五种起始模板（concepts、entities、topics、sources、queries），分类从内容自然产生 |
 | 来源标记 | 未涉及 | 行内脚注：`^[extracted]`、`^[inferred]`、`^[ambiguous]` |
 | Obsidian 集成 | 仅提供建议 | 完整参考：URI 方案、CLI 命令、仓库配置、插件 |
 

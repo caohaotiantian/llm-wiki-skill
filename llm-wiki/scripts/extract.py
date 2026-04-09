@@ -103,6 +103,11 @@ def default_output_path(input_path: str) -> str:
         check_dir = os.path.dirname(check_dir)
 
     # Fallback: put extracted/ next to the input file
+    print(
+        f"Warning: {input_path} is not under a raw/ directory. "
+        f"Output will go to extracted/ next to the input file.",
+        file=sys.stderr,
+    )
     filename = os.path.basename(input_path)
     extracted_dir = os.path.join(input_dir, "extracted")
     os.makedirs(extracted_dir, exist_ok=True)

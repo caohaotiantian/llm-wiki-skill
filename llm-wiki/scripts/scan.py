@@ -98,8 +98,14 @@ def scan_raw(vault_path: Path, quality_ratio: float = MIN_QUALITY_RATIO) -> dict
             rel_path = os.path.relpath(full_path, vault_path)
             ext = os.path.splitext(fname)[1].lower()
 
-            # Skip native text/code files — they don't need extraction
+            # Native text/code files don't need extraction but may be new
             if ext in NATIVE_EXTENSIONS:
+                if rel_path not in manifest_by_path:
+                    new_files.append({
+                        "path": rel_path,
+                        "size_bytes": os.path.getsize(full_path),
+                        "type": "text",
+                    })
                 continue
 
             # Determine expected extracted path (preserving subdirectory structure)
@@ -116,6 +122,7 @@ def scan_raw(vault_path: Path, quality_ratio: float = MIN_QUALITY_RATIO) -> dict
                 new_files.append({
                     "path": rel_path,
                     "size_bytes": os.path.getsize(full_path),
+                    "type": "binary",
                     "extracted_exists": os.path.exists(extracted_path),
                 })
                 continue
@@ -302,14 +309,21 @@ def main():
 
     if args.watch is not None:
         # Periodic scanning mode
+        from datetime import datetime, timezone
         interval = max(args.watch, 10)  # minimum 10 seconds
         print(f"Scanning {vault_path / 'raw'} every {interval}s. Press Ctrl+C to stop.\n")
+        last_actionable = -1
         try:
             while True:
                 report = scan_raw(vault_path, quality_ratio=quality_ratio)
-                print_report(report, json_output=args.json_output)
-                if args.auto_extract and report["stats"]["total_actionable"] > 0:
-                    auto_extract(vault_path, report)
+                actionable = report["stats"]["total_actionable"]
+                ts = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+                if actionable > 0 or actionable != last_actionable:
+                    print(f"--- [{ts}] ---")
+                    print_report(report, json_output=args.json_output)
+                    if args.auto_extract and actionable > 0:
+                        auto_extract(vault_path, report)
+                last_actionable = actionable
                 time.sleep(interval)
         except KeyboardInterrupt:
             print("\nStopped.")

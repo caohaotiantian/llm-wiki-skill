@@ -213,24 +213,16 @@ This way, `git pull` in the source repo updates all agents at once.
 
 ## Installing dependencies
 
-The skill works without any Python dependencies — the agent can read files directly. For better extraction quality and file monitoring, install Python 3.10+ and these packages:
+The skill works without any Python dependencies — the agent can read files directly. For better extraction quality (PDF, DOCX, PPTX, etc.), install Python 3.10+ and docling:
 
 ```bash
-pip install docling watchdog
+pip install docling
 ```
 
-## Checking dependencies
+## Agent self-install
 
-After installation, run the dependency checker:
+You can also just tell your agent to install the skill for you:
 
-```bash
-python3 /path/to/llm-wiki-skill/scripts/check-deps.py
-```
+> "Install the LLM Wiki skill from https://github.com/caohaotiantian/llm-wiki-skill and set up a knowledge base in ./my-wiki"
 
-Or from the cloned repo:
-
-```bash
-python3 scripts/check-deps.py
-```
-
-This checks for Python, Obsidian, docling, watchdog, and optional PDF tools.
+The agent will clone the repo, copy the skill bundle to the right location, install dependencies, and initialize a wiki vault.

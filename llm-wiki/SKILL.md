@@ -47,20 +47,13 @@ Raw Sources → Wiki Pages → Index/Schema
 ├── raw/                    # Immutable source documents (flat or organized — your choice)
 │   ├── extracted/          # Docling-extracted markdown versions of binary sources
 │   └── .manifest.json      # Tracks ingested sources (hash, timestamp, resulting pages)
-├── wiki/                   # Synthesized knowledge pages
-│   ├── concepts/
-│   ├── entities/
-│   ├── topics/
-│   ├── sources/            # Source summary pages
-│   └── queries/            # Filed query answers and analyses
-├── outputs/                # Generated artifacts (reports, answers)
-│   └── reports/
+├── wiki/                   # Synthesized knowledge pages (subdirectories emerge from content)
 ├── index.md                # Content catalog — organized by category
 ├── log.md                  # Append-only operation history
 └── schema.md               # Wiki conventions and page templates
 ```
 
-The subdirectories under both `raw/` and `wiki/` are suggestions — users can drop files directly into `raw/` or organize them into subdirectories as they see fit. The agent discovers files by scanning `raw/` recursively, not by expecting a fixed directory structure. Similarly, the wiki taxonomy should emerge from the content. If a domain naturally has different categories (e.g., `protocols/`, `people/`, `systems/`), use those instead.
+The subdirectories under both `raw/` and `wiki/` are **not prescribed** — they should emerge from the content. The agent discovers files by scanning recursively, not by expecting a fixed directory structure. Common starting patterns include `concepts/`, `entities/`, `topics/`, `sources/`, `queries/` — but a domain might naturally call for `protocols/`, `people/`, `systems/`, or something else entirely. Let the content dictate the taxonomy. The templates in `schema.md` provide five page types as starting points; adapt or ignore them as needed.
 
 ---
 
@@ -70,18 +63,18 @@ When the user asks to set up a new wiki or knowledge base:
 
 1. **Check dependencies** — before anything else, verify the current Python environment has the optional packages:
    ```python
-   python3 -c "import docling; import watchdog; print('Dependencies OK')"
+   python3 -c "import docling; print('Dependencies OK')"
    ```
    - **If both imports succeed**: skip step 2 — use the current environment as-is.
    - **If any import fails**: inform the user. These are optional — the skill works without them (the agent can read files directly and watch for changes manually). Ask whether they'd like to install into a virtual environment. Do not install without confirmation.
 2. **Set up a Python virtual environment** (only if step 1 failed and user agreed):
    ```bash
    python3 -m venv <vault-path>/.venv
-   <vault-path>/.venv/bin/pip install docling watchdog
+   <vault-path>/.venv/bin/pip install docling
    ```
    On Windows, use `<vault-path>\.venv\Scripts\pip` instead. This keeps the skill's dependencies isolated from the system Python.
 3. **Create the vault directory** at the user's specified path (or current directory)
-4. **Initialize the structure** — create `raw/`, `wiki/`, `outputs/reports/`, `index.md`, `log.md`, `schema.md`, and `raw/.manifest.json`
+4. **Initialize the structure** — create `raw/`, `wiki/`, `index.md`, `log.md`, `schema.md`, and `raw/.manifest.json`
 5. **Initialize `.obsidian/`** with minimal config so Obsidian recognizes it as a vault
 6. **Register with Obsidian** (if installed) — open the vault using `open "obsidian://open?path=<vault-path>"`. Skip this step if Obsidian is not available; the wiki works as plain markdown files.
 7. **Write `schema.md`** — copy the contents of `references/schema.md` into the vault as `schema.md`
@@ -151,8 +144,7 @@ A populated manifest entry looks like this — follow this schema exactly so cro
   "sources": [
     {
       "path": "raw/articles/microservices-design.pdf",
-      "extracted": "raw/extracted/microservices-design.pdf.md",
-      "snapshot": "raw/extracted/microservices-design.pdf.md.snapshot.md",
+      "extracted": "raw/extracted/articles/microservices-design.pdf.md",
       "extraction_method": "docling +ocr",
       "sha256": "a1b2c3d4e5f6...",
       "ingested_at": "2026-04-07T14:30:00Z",
@@ -165,7 +157,9 @@ A populated manifest entry looks like this — follow this schema exactly so cro
 }
 ```
 
-Fields: `path` (relative to vault root), `extracted` (path to the extracted markdown in `raw/extracted/`, omit for text/markdown sources that don't need extraction), `extraction_method` (`docling +ocr`, `docling`, `fallback`, or `agent`; omit for text/markdown sources), `snapshot` (path to the snapshot file for diff-based re-ingestion), `sha256` (file hash for change detection), `ingested_at` (ISO timestamp), `size_bytes` (file size), `pages_created` (new pages from this source), `pages_updated` (existing pages modified during this ingest).
+Fields: `path` (relative to vault root), `extracted` (path to the extracted markdown in `raw/extracted/`, omit for text/markdown sources that don't need extraction), `extraction_method` (`docling +ocr`, `docling`, `fallback`, or `agent`; omit for text/markdown sources), `sha256` (file hash for change detection), `ingested_at` (ISO timestamp), `size_bytes` (file size), `pages_created` (new pages from this source), `pages_updated` (existing pages modified during this ingest).
+
+Snapshot files follow a deterministic naming convention (`<source-or-extracted-path>.snapshot.md`) and do not need to be tracked in the manifest.
 
 Compute SHA-256 with: `python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>`
 
@@ -335,8 +329,6 @@ The scan detects:
 - **Low quality**: extracted file is suspiciously small relative to source (<1% size ratio or nearly empty)
 - **Modified sources**: file hash differs from what's recorded in manifest
 
-> **Note:** scan.py only reports binary files needing extraction. New text/markdown files are detected by comparing `raw/` contents against `.manifest.json` directly.
-
 ---
 
 ## Query
@@ -383,7 +375,7 @@ Linting ensures wiki health. Run it periodically or when the user asks.
 
 ### Lint output
 
-Save a report to `outputs/reports/lint-YYYY-MM-DD.md`:
+Save a report to `wiki/lint-YYYY-MM-DD.md`:
 
 ```markdown
 # Lint Report — YYYY-MM-DD
@@ -412,7 +404,7 @@ The wiki automatically detects and ingests changes — the user just drops files
 
 At the start of each conversation where the wiki is in scope, scan for changes and **ingest them automatically**:
 
-1. **Pending changes from file watcher** — if `raw/.pending_changes.json` exists and has entries, ingest them. Clear the file after processing.
+1. **Run a scan** — use `python <skill-dir>/scripts/scan.py <vault-path> --json` to get a structured report of new, failed, and low-quality extractions.
 2. **New files in `raw/`** not yet in `.manifest.json` → extract (if binary format) and ingest them. Extracted markdown goes to `raw/extracted/`.
 3. **Modified sources** (compare file hashes to `.manifest.json`) → re-extract and re-ingest them using diff-based processing
 4. **Failed or low-quality extractions** — if a file in the manifest has no extracted file or an unusually small one, retry extraction. You can run `python <skill-dir>/scripts/scan.py <vault-path> --json` to get a structured report of all extraction issues.
@@ -429,7 +421,7 @@ The user can also run operations manually by asking you to ingest, query, or lin
 
 ### Continuous monitoring (optional setup)
 
-For teams that want real-time detection between conversations, provide a file watcher script. Run `scripts/watch.py <vault-path>` to monitor the `raw/` directory and log changes to `.pending_changes.json`. Supports `--filter`, `--debounce`, `--json`, and `--quiet` options. The user can run this in a terminal tab, cron job, or git hook.
+For teams that want periodic detection between conversations, run `scripts/scan.py <vault-path> --watch 300` to re-scan the `raw/` directory every 5 minutes. Use `--auto-extract` to automatically extract new files. The user can run this in a terminal tab or cron job.
 
 The watcher logs detected changes so the next conversation's auto-ingest picks them up immediately.
 
@@ -560,4 +552,3 @@ Key points:
 - `scripts/extract.py` — Document extraction using Docling (optional dependency). Output goes to `raw/extracted/` by default.
 - `scripts/scan.py` — Scans `raw/` for new, failed, or low-quality extractions. Supports periodic scanning and auto-extraction.
 - `scripts/diff_sources.py` — Structured diff between source versions for incremental re-ingestion
-- `scripts/watch.py` — Cross-platform file watcher for continuous change detection (requires `watchdog`)
