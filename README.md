@@ -84,7 +84,7 @@ Then ask Claude: *"Set up a knowledge base wiki in ./my-wiki and ingest these do
 
 **Recommended:**
 - Python 3.10+ — needed for the extraction and scanning scripts
-- [`docling`](https://github.com/docling-project/docling) — for high-quality document extraction (PDF, DOCX, PPTX, XLSX, HTML, images, and more). Install with `pip install docling`. Without it, the agent can still read files directly using its built-in capabilities.
+- [`docling`](https://github.com/docling-project/docling) — for high-quality document extraction (PDF, DOCX, PPTX, XLSX, HTML, images, and more). Install with `pip install docling pip-system-certs`. Without it, the agent can still read files directly using its built-in capabilities.
 - Obsidian — for graph view, search, and Dataview queries. The skill works without it (it's just markdown files), but Obsidian makes the wiki much more useful.
 
 ## Project Structure

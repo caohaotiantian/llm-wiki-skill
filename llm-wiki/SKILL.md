@@ -63,14 +63,14 @@ When the user asks to set up a new wiki or knowledge base:
 
 1. **Check dependencies** — before anything else, verify the current Python environment has the optional packages:
    ```python
-   python3 -c "import docling; print('Dependencies OK')"
+   python3 -c "import docling; import pip_system_certs; print('Dependencies OK')"
    ```
    - **If both imports succeed**: skip step 2 — use the current environment as-is.
    - **If any import fails**: inform the user. These are optional — the skill works without them (the agent can read files directly and watch for changes manually). Ask whether they'd like to install into a virtual environment. Do not install without confirmation.
 2. **Set up a Python virtual environment** (only if step 1 failed and user agreed):
    ```bash
    python3 -m venv <vault-path>/.venv
-   <vault-path>/.venv/bin/pip install docling
+   <vault-path>/.venv/bin/pip install docling pip-system-certs
    ```
    On Windows, use `<vault-path>\.venv\Scripts\pip` instead. This keeps the skill's dependencies isolated from the system Python.
 3. **Create the vault directory** at the user's specified path (or current directory)
@@ -260,7 +260,7 @@ The wiki handles plain markdown, text, and code files natively. For all other fo
 Use the extraction script bundled with the skill. It uses [Docling](https://github.com/docling-project/docling) with optimized settings: accurate table structure recognition, OCR for scanned pages, and 2x image resolution.
 
 ```bash
-pip install docling
+pip install docling pip-system-certs
 ```
 
 ```bash
@@ -303,7 +303,7 @@ This is the simplest approach and requires no Python dependencies. It works well
 If neither approach is available (no Docling, agent cannot read the format), tell the user what to install:
 
 > I need the Docling library to extract text from this .docx file. Install it with:
-> `pip install docling`
+> `pip install docling pip-system-certs`
 
 ### Scanning for extraction work
 

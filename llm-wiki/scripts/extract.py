@@ -2,7 +2,7 @@
 """
 Extract text content from documents into markdown.
 
-Requires: pip install docling
+Requires: pip install docling pip-system-certs
 
 Usage:
     python extract.py <input-file>                     # output to raw/extracted/
@@ -71,7 +71,7 @@ def extract_fallback(input_path: str) -> str:
 
     raise ValueError(
         f"Cannot extract text from {ext} files without the 'docling' library.\n"
-        f"Install it with: pip install docling"
+        f"Install it with: pip install docling pip-system-certs"
     )
 
 
@@ -191,7 +191,7 @@ def main():
         method = "docling" + (" +ocr" if ocr else "")
     except ImportError:
         print(f"Error: The 'docling' library is required for {ext} files.")
-        print("Install it with: pip install docling")
+        print("Install it with: pip install docling pip-system-certs")
         sys.exit(1)
     except RuntimeError as e:
         print(f"Error: docling failed to initialize (model loading issue?): {e}")

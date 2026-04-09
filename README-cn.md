@@ -84,7 +84,7 @@ cp -r llm-wiki-skill/llm-wiki .claude/skills/llm-wiki
 
 **推荐：**
 - Python 3.10+ — 运行文档提取和扫描脚本所需
-- [`docling`](https://github.com/docling-project/docling) — 用于高质量文档提取（PDF、DOCX、PPTX、XLSX、HTML、图片等）。安装：`pip install docling`。未安装时，智能体仍可使用内置能力直接读取文件。
+- [`docling`](https://github.com/docling-project/docling) — 用于高质量文档提取（PDF、DOCX、PPTX、XLSX、HTML、图片等）。安装：`pip install docling pip-system-certs`。未安装时，智能体仍可使用内置能力直接读取文件。
 - Obsidian — 用于图谱视图、搜索和 Dataview 查询。没有它也能正常工作（本质上只是 Markdown 文件），但 Obsidian 能让 wiki 更好用。
 
 ## 项目结构
