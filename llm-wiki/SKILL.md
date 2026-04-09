@@ -233,11 +233,37 @@ One-to-two sentence summary for quick scanning.
 - [[raw/articles/source-name]] — extracted on YYYY-MM-DD
 ```
 
-### Step 4: Cross-link
+**Linking rules:**
+- The link target in `[[wikilinks]]` MUST be the exact filename of the target page (without `.md`). For example, if the file is `wiki/concepts/artificial-intelligence.md`, link to it as `[[artificial-intelligence]]`.
+- To display an alternative name, use pipe syntax: `[[artificial-intelligence|AI]]`.
+- Never write `[[alias-text]]` as a bare link — Obsidian does not resolve aliases in link targets. See `references/obsidian.md` → "Wikilink Resolution Rules" for details.
 
-- Use `[[wikilinks]]` for all references to other wiki pages
+### Step 4: Cross-link and verify
+
+- Use `[[wikilinks]]` for all references to other wiki pages. Link targets must be exact filenames — use `[[filename|display text]]` when the display text differs from the filename.
 - Scan existing pages for mentions of newly created concepts — add links there too
 - Every page should be reachable from at least one other page (no orphans)
+- **Verify every link target:** For each `[[wikilink]]` in the page, confirm the target file exists (or will be created in this batch). If it doesn't exist and isn't planned for creation, create a stub page immediately:
+
+```markdown
+---
+aliases: []
+tags: []
+sources: []
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+status: stub
+---
+
+# Page Title
+
+> [!todo] Stub
+> This page was auto-created because it was referenced from other wiki pages.
+> Expand it when source material is available.
+
+## Referenced from
+- [[page-that-linked-here]]
+```
 
 ### Step 5: Update coordination files
 
