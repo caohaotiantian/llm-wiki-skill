@@ -141,10 +141,6 @@ The gist also suggests features this project does not yet cover: dedicated searc
 ## Credits
 
 - [Andrej Karpathy](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — The LLM Wiki concept
-- [ekadetov/llm-wiki](https://github.com/ekadetov/llm-wiki) — Claude Code plugin implementation
-- [Ar9av/obsidian-wiki](https://github.com/Ar9av/obsidian-wiki) — Obsidian wiki framework with multi-agent support
-- [kepano/obsidian-skills](https://github.com/kepano/obsidian-skills) — Obsidian agent skills and CLI reference
-- [safishamsi/graphify](https://github.com/safishamsi/graphify) — Knowledge graph extraction patterns
 
 ## License
 

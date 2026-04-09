@@ -141,10 +141,6 @@ Karpathy 的[原始 gist](https://gist.github.com/karpathy/442a6bf555914893e9891
 ## 致谢
 
 - [Andrej Karpathy](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — LLM Wiki 概念
-- [ekadetov/llm-wiki](https://github.com/ekadetov/llm-wiki) — Claude Code 插件实现
-- [Ar9av/obsidian-wiki](https://github.com/Ar9av/obsidian-wiki) — 支持多智能体的 Obsidian wiki 框架
-- [kepano/obsidian-skills](https://github.com/kepano/obsidian-skills) — Obsidian 智能体技能和 CLI 参考
-- [safishamsi/graphify](https://github.com/safishamsi/graphify) — 知识图谱提取模式
 
 ## 许可证
 
