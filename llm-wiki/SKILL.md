@@ -610,3 +610,4 @@ Key points:
 - `scripts/extract.py` — Document extraction using Docling (optional dependency). Output goes to `raw/extracted/` by default.
 - `scripts/scan.py` — Scans `raw/` for new, failed, or low-quality extractions. Supports periodic scanning and auto-extraction.
 - `scripts/diff_sources.py` — Structured diff between source versions for incremental re-ingestion
+- `scripts/lint_links.py` — Wikilink validator: scans for alias mismatches (`[[alias]]` that should be `[[filename|alias]]`) and missing link targets. Supports vault-wide lint and targeted post-ingest validation. Use `--fix` to auto-repair alias mismatches, `--json` for structured output.
