@@ -95,6 +95,9 @@ def main():
         print(f"Error: The 'docling' library is required for {ext} files.")
         print("Install it with: pip install docling")
         sys.exit(1)
+    except RuntimeError as e:
+        print(f"Error: docling failed to initialize (model loading issue?): {e}")
+        sys.exit(1)
     except Exception as e:
         print(f"Extraction failed for {input_path}: {e}")
         sys.exit(1)

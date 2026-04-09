@@ -80,10 +80,10 @@ def check_obsidian_cli() -> tuple[bool, str]:
 
 def check_docling() -> tuple[bool, str]:
     try:
-        from importlib.metadata import version
+        from importlib.metadata import version, PackageNotFoundError
         ver = version("docling")
         return True, f"v{ver}"
-    except Exception:
+    except PackageNotFoundError:
         return False, "pip install docling"
 
 
