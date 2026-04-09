@@ -475,7 +475,7 @@ Briefly report what was processed:
 
 > Auto-ingested 2 new files and re-ingested 1 modified source. Created 5 wiki pages, updated 2.
 
-No user confirmation is needed for auto-ingest — **except** when the mass update safeguard applies (modifying >10 existing pages). In that case, pause and list the affected pages before proceeding.
+For each ingested file, follow the full Ingest workflow (Steps 1–5.5), including post-ingest link validation. No user confirmation is needed for auto-ingest — **except** when the mass update safeguard applies (modifying >10 existing pages). In that case, pause and list the affected pages before proceeding.
 
 ### Explicit triggers
 
@@ -517,12 +517,13 @@ Based on the diff:
 2. **Update wiki pages**: Modify only the parts that correspond to changed sections. Don't regenerate from scratch — preserve manually added content and links from other sources
 3. **Follow the link graph**: Check pages that link to the updated pages. If the changes affect their content (e.g., a renamed concept, a corrected fact), update those too
 
-### Step 4: Finalize
+### Step 4: Validate and finalize
 
-1. **Save new snapshot**: Overwrite `<source>.snapshot.md` with the new content
-2. **Update `.manifest.json`**: New hash, timestamp, and updated page lists
-3. **Update `index.md`**: Refresh summaries for modified pages
-4. **Append to `log.md`**: Record what changed using the diff summary (e.g., "3 sections changed, 1 added")
+1. **Validate links**: Run `python <skill-dir>/scripts/lint_links.py <vault-path> --files <modified-pages...> --json` on all pages modified in this update. Fix any alias mismatches with `--fix` and create stubs for missing targets before proceeding.
+2. **Save new snapshot**: Overwrite `<source>.snapshot.md` with the new content
+3. **Update `.manifest.json`**: New hash, timestamp, and updated page lists
+4. **Update `index.md`**: Refresh summaries for modified pages
+5. **Append to `log.md`**: Record what changed using the diff summary (e.g., "3 sections changed, 1 added") — only after validation passes
 
 The depth of cascading depends on the nature of the change:
 - **Factual correction**: Update the page + any pages that cite the corrected fact

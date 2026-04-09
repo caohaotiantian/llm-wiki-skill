@@ -99,7 +99,8 @@ llm-wiki-skill/
 │   └── scripts/
 │       ├── extract.py       # 文档提取（可选 Docling 集成）
 │       ├── scan.py          # 扫描 raw/ 发现新增、失败或低质量的提取
-│       └── diff_sources.py  # 用于增量重新摄入的结构化差异
+│       ├── diff_sources.py  # 用于增量重新摄入的结构化差异
+│       └── lint_links.py    # Wikilink 验证器（别名不匹配、缺失页面）
 ├── INSTALL.md               # 各平台安装说明
 ├── LICENSE                  # MIT
 └── README.md                # 英文说明

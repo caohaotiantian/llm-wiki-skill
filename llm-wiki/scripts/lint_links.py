@@ -161,7 +161,11 @@ def extract_link_target(wikilink_content: str) -> str:
     target = wikilink_content.split("|")[0]
     # Remove heading/block reference (after #)
     target = target.split("#")[0]
-    return target.strip()
+    target = target.strip()
+    # Strip .md extension — Obsidian ignores it during resolution
+    if target.lower().endswith(".md"):
+        target = target[:-3]
+    return target
 
 
 def scan_file_for_links(file_path: str) -> list[dict]:
@@ -186,7 +190,7 @@ def scan_file_for_links(file_path: str) -> list[dict]:
             in_frontmatter = True
             continue
         if in_frontmatter:
-            if line.strip() == "---":
+            if line.strip() in ("---", "..."):
                 in_frontmatter = False
             continue
 
@@ -350,7 +354,7 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
                 new_lines.append(line)
                 continue
             if in_frontmatter:
-                if line.strip() == "---":
+                if line.strip() in ("---", "..."):
                     in_frontmatter = False
                 new_lines.append(line)
                 continue
@@ -510,6 +514,7 @@ def main():
         # Re-scan after fixing to get updated report
         index = build_resolution_index(vault_path)
         report = resolve_links(vault_path, index, files_to_scan)
+        report["summary"]["fixes_applied"] = fixes
 
     print_report(report, json_output=args.json_output)
     sys.exit(0 if report["clean"] else 1)
