@@ -158,7 +158,6 @@ def scan_file_for_links(file_path: str) -> list[dict]:
 
     results = []
     in_frontmatter = False
-    frontmatter_closed = False
 
     for i, line in enumerate(lines, start=1):
         # Skip frontmatter — links in YAML values aren't rendered as wikilinks
@@ -168,7 +167,6 @@ def scan_file_for_links(file_path: str) -> list[dict]:
         if in_frontmatter:
             if line.strip() == "---":
                 in_frontmatter = False
-                frontmatter_closed = True
             continue
 
         for match in WIKILINK_RE.finditer(line):
@@ -285,8 +283,9 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
             old_link = f"[[{m['link']}]]"
             new_link = f"[[{target_stem}|{m['link']}]]"
             if old_link in content:
-                content = content.replace(old_link, new_link, 1)
-                fixes_applied += 1
+                count = content.count(old_link)
+                content = content.replace(old_link, new_link)
+                fixes_applied += count
 
         try:
             with open(abs_path, "w", encoding="utf-8") as f:
