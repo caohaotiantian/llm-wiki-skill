@@ -268,8 +268,8 @@ status: stub
 ### Step 5: Update coordination files
 
 - **`index.md`**: Add/update entries for all new/modified pages with one-line summaries
-- **`log.md`**: Append an entry like `## [2026-04-07 14:30] ingest | Source Title` with a bullet list of pages created/updated
 - **`.manifest.json`**: Record the source file path, SHA-256 hash, timestamp, and list of resulting wiki pages
+- **`log.md`**: Defer the log entry until after Step 5.5 validation passes. Then append `## [2026-04-07 14:30] ingest | Source Title` with a bullet list of pages created/updated
 
 ### Step 5.5: Validate links
 
@@ -280,9 +280,12 @@ python <skill-dir>/scripts/lint_links.py <vault-path> --files <page1.md> <page2.
 ```
 
 Process the results:
-- **`alias_mismatches`**: Run again with `--fix` to automatically rewrite `[[alias]]` → `[[filename|alias]]`
+- **`alias_mismatches`**: Run again with `--fix` to automatically rewrite `[[alias]]` → `[[filename|alias]]`:
+  ```bash
+  python <skill-dir>/scripts/lint_links.py <vault-path> --files <page1.md> <page2.md> ... --fix
+  ```
 - **`missing`**: Create stub pages (`status: stub`) for each missing target using the template from Step 4, then re-run validation to confirm all links resolve
-- Only log the ingest as complete in `log.md` **after** validation passes (the `clean` field in JSON output is `true`)
+- Only append the `log.md` entry (deferred from Step 5) **after** validation passes (the `clean` field in JSON output is `true`)
 
 This step catches two common issues: links that use an alias instead of the canonical filename (which Obsidian cannot resolve), and forward-references to pages that were mentioned but never created.
 

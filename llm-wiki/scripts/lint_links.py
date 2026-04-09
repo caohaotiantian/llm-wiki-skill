@@ -112,7 +112,8 @@ def build_resolution_index(vault_path: Path) -> dict:
 
                 # Parse aliases from frontmatter
                 try:
-                    content = open(full_path, "r", encoding="utf-8", errors="replace").read()
+                    with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read()
                 except OSError:
                     continue
 
@@ -158,6 +159,7 @@ def scan_file_for_links(file_path: str) -> list[dict]:
 
     results = []
     in_frontmatter = False
+    in_code_block = False
 
     for i, line in enumerate(lines, start=1):
         # Skip frontmatter — links in YAML values aren't rendered as wikilinks
@@ -169,9 +171,18 @@ def scan_file_for_links(file_path: str) -> list[dict]:
                 in_frontmatter = False
             continue
 
+        # Skip fenced code blocks — links inside ``` are not rendered
+        stripped = line.strip()
+        if stripped.startswith("```") or stripped.startswith("~~~"):
+            in_code_block = not in_code_block
+            continue
+        if in_code_block:
+            continue
+
         for match in WIKILINK_RE.finditer(line):
             raw = match.group(1)
             target = extract_link_target(raw)
+            # Skip same-note heading links like [[#Heading]] (target is empty)
             if target:
                 results.append({"line": i, "raw": raw, "target": target})
 
@@ -290,8 +301,8 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
         try:
             with open(abs_path, "w", encoding="utf-8") as f:
                 f.write(content)
-        except OSError:
-            pass
+        except OSError as e:
+            print(f"Warning: could not write {rel_path}: {e}", file=sys.stderr)
 
     return fixes_applied
 
