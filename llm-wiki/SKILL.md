@@ -69,14 +69,14 @@ When the user asks to set up a new wiki or knowledge base:
 
 1. **Check dependencies** — before anything else, verify the current Python environment has the required packages:
    ```python
-   python3 -c "import unstructured; import watchdog; print('Dependencies OK')"
+   python3 -c "import docling; import watchdog; print('Dependencies OK')"
    ```
    - **If both imports succeed**: skip step 2 — use the current environment as-is.
    - **If any import fails**: ask the user whether they'd like to install the missing dependencies into a new virtual environment. Do not install without confirmation.
 2. **Set up a Python virtual environment** (only if step 1 failed and user agreed):
    ```bash
    python3 -m venv <vault-path>/.venv
-   <vault-path>/.venv/bin/pip install "unstructured[all-docs]" watchdog
+   <vault-path>/.venv/bin/pip install docling watchdog
    ```
    On Windows, use `<vault-path>\.venv\Scripts\pip` instead. This keeps the skill's dependencies isolated from the system Python.
 3. **Create the vault directory** at the user's specified path (or current directory)
@@ -255,23 +255,14 @@ If an ingest or update operation would modify more than 10 existing wiki pages, 
 
 ## Document Extraction
 
-The wiki handles plain markdown, text, and code files natively. For all other formats (PDF, DOCX, PPTX, images, HTML), the [Unstructured](https://github.com/Unstructured-IO/unstructured) library is required.
+The wiki handles plain markdown, text, and code files natively. For all other formats (PDF, DOCX, PPTX, XLSX, images, HTML, and more), the [Docling](https://github.com/docling-project/docling) library is required.
 
 ### Setup
 
-Install Unstructured with full document support:
+Install Docling:
 
 ```bash
-pip install "unstructured[all-docs]"
-```
-
-Or install only the formats you need:
-
-```bash
-pip install "unstructured[pdf]"       # PDF support
-pip install "unstructured[docx]"      # Word documents
-pip install "unstructured[pptx]"      # PowerPoint
-pip install "unstructured[docx,pdf]"  # Multiple formats
+pip install docling
 ```
 
 ### Usage
@@ -282,12 +273,12 @@ Use the extraction script bundled with the skill (find it relative to this SKILL
 python <skill-dir>/scripts/extract.py <input-file> <output-markdown>
 ```
 
-The script auto-detects file type and routes to the appropriate Unstructured handler. For plain text, markdown, and code files, it reads them directly without Unstructured.
+The script auto-detects file type and routes to Docling for conversion. For plain text, markdown, and code files, it reads them directly without Docling.
 
-If `unstructured` is not installed and the user provides a non-text file, tell them what to install:
+If `docling` is not installed and the user provides a non-text file, tell them what to install:
 
-> I need the Unstructured library to extract text from this .docx file. Install it with:
-> `pip install "unstructured[docx]"`
+> I need the Docling library to extract text from this .docx file. Install it with:
+> `pip install docling`
 
 ---
 
@@ -508,6 +499,6 @@ Key points:
 
 - `references/schema.md` — Default page templates and frontmatter conventions
 - `references/obsidian.md` — Obsidian operating reference: URI scheme, CLI commands, flavored markdown syntax, vault config, recommended plugins, and retrieval patterns
-- `scripts/extract.py` — Document extraction using Unstructured (optional dependency)
+- `scripts/extract.py` — Document extraction using Docling (optional dependency)
 - `scripts/diff_sources.py` — Structured diff between source versions for incremental re-ingestion
 - `scripts/watch.py` — Cross-platform file watcher for continuous change detection (requires `watchdog`)

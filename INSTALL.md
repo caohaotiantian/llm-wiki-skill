@@ -213,16 +213,10 @@ This way, `git pull` in the source repo updates all agents at once.
 
 ## Installing dependencies
 
-The skill requires Python 3.8+ and two pip packages:
+The skill requires Python 3.10+ and two pip packages:
 
 ```bash
-pip install "unstructured[all-docs]" watchdog
-```
-
-Or install only the Unstructured formats you need:
-
-```bash
-pip install "unstructured[pdf,docx]" watchdog
+pip install docling watchdog
 ```
 
 ## Checking dependencies
@@ -239,4 +233,4 @@ Or from the cloned repo:
 python3 scripts/check-deps.py
 ```
 
-This checks for Python, Obsidian, unstructured, watchdog, and optional PDF tools.
+This checks for Python, Obsidian, docling, watchdog, and optional PDF tools.

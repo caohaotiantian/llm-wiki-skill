@@ -61,7 +61,7 @@ my-wiki/
 - **Obsidian-native** — Uses wikilinks, callouts, embeds, frontmatter, tags, and Graph View
 - **Scaling guidance** — Strategies for 100+ sources / 500+ pages (index splitting, targeted lint, log rotation)
 - **Session scoping** — Prevents infinite reprocessing loops across conversations
-- **Optional Unstructured integration** — Extract text from PDFs, DOCX, PPTX, images
+- **Optional Docling integration** — Extract text from PDFs, DOCX, PPTX, XLSX, HTML, images, and more
 - **File watcher** — Cross-platform monitoring of raw sources for changes (requires `watchdog`)
 
 ## Installation
@@ -91,8 +91,8 @@ python3 scripts/check-deps.py
 
 **Required:**
 - An AI coding agent that supports skills (Claude Code, Codex, Gemini CLI, etc.)
-- Python 3.8+
-- [`unstructured`](https://github.com/Unstructured-IO/unstructured) — for document extraction (PDF, DOCX, PPTX, images). Install with `pip install "unstructured[all-docs]"`.
+- Python 3.10+
+- [`docling`](https://github.com/docling-project/docling) — for document extraction (PDF, DOCX, PPTX, XLSX, HTML, images, and more). Install with `pip install docling`.
 - [`watchdog`](https://github.com/gorakhargosh/watchdog) — for the file watcher. Install with `pip install watchdog`.
 
 **Recommended:**
@@ -108,7 +108,7 @@ llm-wiki-skill/
 │   │   ├── schema.md        # Page templates and frontmatter conventions
 │   │   └── obsidian.md      # Obsidian operating reference (URI, CLI, markdown)
 │   └── scripts/
-│       ├── extract.py       # Document extraction (optional Unstructured integration)
+│       ├── extract.py       # Document extraction (optional Docling integration)
 │       ├── diff_sources.py  # Structured diff for incremental re-ingestion
 │       └── watch.py         # Cross-platform file watcher (requires watchdog)
 ├── scripts/

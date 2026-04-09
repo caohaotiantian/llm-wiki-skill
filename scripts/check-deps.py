@@ -25,10 +25,10 @@ def check_mark(ok: bool) -> str:
 def check_python() -> tuple[bool, str]:
     version = sys.version.split()[0]
     major, minor = sys.version_info[:2]
-    ok = major >= 3 and minor >= 8
+    ok = major >= 3 and minor >= 10
     detail = f"Python {version}"
     if not ok:
-        detail += " (need 3.8+)"
+        detail += " (need 3.10+)"
     return ok, detail
 
 
@@ -78,30 +78,13 @@ def check_obsidian_cli() -> tuple[bool, str]:
     return False, "Not found (requires Obsidian Desktop v1.12.0+)"
 
 
-def check_unstructured() -> tuple[bool, str]:
+def check_docling() -> tuple[bool, str]:
     try:
-        import unstructured  # noqa: F401
-        version = getattr(unstructured, "__version__", "unknown")
-        return True, f"v{version}"
-    except ImportError:
-        return False, 'pip install "unstructured[all-docs]"'
-
-
-def check_unstructured_extras() -> list[tuple[str, bool, str]]:
-    results = []
-    extras = {
-        "docx": "unstructured.partition.docx",
-        "pdf": "unstructured.partition.pdf",
-        "pptx": "unstructured.partition.pptx",
-        "html": "unstructured.partition.html",
-    }
-    for name, module_path in extras.items():
-        try:
-            __import__(module_path)
-            results.append((f"  unstructured[{name}]", True, "Available"))
-        except ImportError:
-            results.append((f"  unstructured[{name}]", False, f'pip install "unstructured[{name}]"'))
-    return results
+        from importlib.metadata import version
+        ver = version("docling")
+        return True, f"v{ver}"
+    except Exception:
+        return False, "pip install docling"
 
 
 def check_watchdog() -> tuple[bool, str]:
@@ -146,7 +129,7 @@ def main():
     print("-" * 40)
 
     ok, detail = check_python()
-    print(f"  [{check_mark(ok):>7}]  Python 3.8+        {detail}")
+    print(f"  [{check_mark(ok):>7}]  Python 3.10+       {detail}")
     if not ok:
         all_ok = False
 
@@ -154,13 +137,10 @@ def main():
     venv_status = "OK" if venv_ok else "WARN"
     print(f"  [{venv_status:>7}]  Virtual env        {venv_detail}")
 
-    has_unstructured, unstructured_detail = check_unstructured()
-    print(f"  [{check_mark(has_unstructured):>7}]  unstructured       {unstructured_detail}")
-    if has_unstructured:
-        for name, extra_ok, extra_detail in check_unstructured_extras():
-            print(f"  [{check_mark(extra_ok):>7}]  {name:<18} {extra_detail}")
-    else:
-        print('           Install: pip install "unstructured[all-docs]"')
+    has_docling, docling_detail = check_docling()
+    print(f"  [{check_mark(has_docling):>7}]  docling            {docling_detail}")
+    if not has_docling:
+        print("           Install: pip install docling")
         all_ok = False
 
     has_watchdog, watchdog_detail = check_watchdog()

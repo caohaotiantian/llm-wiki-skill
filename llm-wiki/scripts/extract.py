@@ -2,8 +2,7 @@
 """
 Extract text content from documents into markdown.
 
-Requires: pip install "unstructured[all-docs]"
-Or for specific formats: pip install "unstructured[docx]", "unstructured[pdf]", etc.
+Requires: pip install docling
 
 Usage:
     python extract.py <input-file> <output-markdown>
@@ -15,32 +14,17 @@ import sys
 import os
 
 
-def extract_with_unstructured(input_path: str) -> str:
-    """Extract text using the unstructured library."""
-    from unstructured.partition.auto import partition
+def extract_with_docling(input_path: str) -> str:
+    """Extract text using the docling library."""
+    from docling.document_converter import DocumentConverter
 
-    elements = partition(input_path)
-    sections = []
-    for el in elements:
-        el_type = type(el).__name__
-        text = str(el).strip()
-        if not text:
-            continue
-        if el_type == "Title":
-            sections.append(f"## {text}")
-        elif el_type == "Header":
-            sections.append(f"### {text}")
-        elif el_type == "ListItem":
-            sections.append(f"- {text}")
-        elif el_type == "Table":
-            sections.append(f"```\n{text}\n```")
-        else:
-            sections.append(text)
-    return "\n\n".join(sections)
+    converter = DocumentConverter()
+    result = converter.convert(input_path)
+    return result.document.export_to_markdown()
 
 
 def extract_fallback(input_path: str) -> str:
-    """Fallback extraction for common formats without unstructured."""
+    """Fallback extraction for common formats without docling."""
     ext = os.path.splitext(input_path)[1].lower()
 
     if ext in (".md", ".txt", ".csv", ".json", ".xml", ".yaml", ".yml"):
@@ -53,8 +37,8 @@ def extract_fallback(input_path: str) -> str:
         return f"```{ext.lstrip('.')}\n{content}\n```"
 
     raise ValueError(
-        f"Cannot extract text from {ext} files without the 'unstructured' library.\n"
-        f"Install it with: pip install \"unstructured[all-docs]\""
+        f"Cannot extract text from {ext} files without the 'docling' library.\n"
+        f"Install it with: pip install docling"
     )
 
 
@@ -103,13 +87,13 @@ def main():
             print(f"Extracted {input_path} -> {output_path} (method: {method})")
             return
 
-    # For all other formats, use Unstructured (required)
+    # For all other formats, use Docling (required)
     try:
-        content = extract_with_unstructured(input_path)
-        method = "unstructured"
+        content = extract_with_docling(input_path)
+        method = "docling"
     except ImportError:
-        print(f"Error: The 'unstructured' library is required for {ext} files.")
-        print(f'Install it with: pip install "unstructured[all-docs]"')
+        print(f"Error: The 'docling' library is required for {ext} files.")
+        print("Install it with: pip install docling")
         sys.exit(1)
     except Exception as e:
         print(f"Extraction failed for {input_path}: {e}")
