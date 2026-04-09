@@ -40,6 +40,9 @@ def parse_frontmatter_aliases(content: str) -> list[str]:
           - a
           - b
     """
+    # Normalize CRLF → LF for Windows compatibility
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+
     # Extract frontmatter block
     match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
     if not match:
@@ -99,8 +102,13 @@ def build_resolution_index(vault_path: Path) -> dict:
                 rel_path = os.path.relpath(full_path, vault_path)
                 stem = os.path.splitext(fname)[0]
 
-                # Register filename
+                # Register filename (warn on duplicates)
                 norm_stem = normalize_for_matching(stem)
+                if norm_stem in by_filename and by_filename[norm_stem] != rel_path:
+                    print(f"Warning: duplicate filename '{stem}' — "
+                          f"{by_filename[norm_stem]} and {rel_path}. "
+                          f"Bare [[{stem}]] links are ambiguous.",
+                          file=sys.stderr)
                 by_filename[norm_stem] = rel_path
 
                 # Also register with directory prefix for path-based links
@@ -179,7 +187,10 @@ def scan_file_for_links(file_path: str) -> list[dict]:
         if in_code_block:
             continue
 
-        for match in WIKILINK_RE.finditer(line):
+        # Strip inline code spans — links inside `backticks` are not rendered
+        scannable = re.sub(r"`[^`]+`", "", line)
+
+        for match in WIKILINK_RE.finditer(scannable):
             raw = match.group(1)
             target = extract_link_target(raw)
             # Skip same-note heading links like [[#Heading]] (target is empty)
@@ -273,6 +284,9 @@ def resolve_links(
 def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
     """Rewrite [[alias]] → [[filename|alias]] in-place for each mismatch.
 
+    Skips frontmatter and fenced code blocks to avoid corrupting examples.
+    Uses regex with boundary anchors to avoid corrupting pipe-syntax links.
+
     Returns the number of fixes applied.
     """
     # Group mismatches by file for efficient processing
@@ -285,22 +299,68 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
     for rel_path, file_mismatches in by_file.items():
         abs_path = os.path.join(str(vault_path), rel_path)
         try:
-            content = open(abs_path, "r", encoding="utf-8").read()
+            with open(abs_path, "r", encoding="utf-8") as f:
+                lines = f.readlines()
         except OSError:
             continue
 
+        # Build replacement map: alias text → new link text
+        replacements: dict[str, str] = {}
         for m in file_mismatches:
             target_stem = os.path.splitext(os.path.basename(m["target_file"]))[0]
-            old_link = f"[[{m['link']}]]"
-            new_link = f"[[{target_stem}|{m['link']}]]"
-            if old_link in content:
-                count = content.count(old_link)
-                content = content.replace(old_link, new_link)
-                fixes_applied += count
+            replacements[m["link"]] = target_stem
+
+        new_lines = []
+        in_frontmatter = False
+        in_code_block = False
+
+        for i, line in enumerate(lines):
+            # Skip frontmatter
+            if i == 0 and line.strip() == "---":
+                in_frontmatter = True
+                new_lines.append(line)
+                continue
+            if in_frontmatter:
+                if line.strip() == "---":
+                    in_frontmatter = False
+                new_lines.append(line)
+                continue
+
+            # Skip fenced code blocks
+            stripped = line.strip()
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                in_code_block = not in_code_block
+                new_lines.append(line)
+                continue
+            if in_code_block:
+                new_lines.append(line)
+                continue
+
+            # Apply replacements only outside inline code spans
+            # Split line into code/non-code segments, fix only non-code parts
+            parts = re.split(r"(`[^`]+`)", line)
+            modified_parts = []
+            for part in parts:
+                if part.startswith("`") and part.endswith("`"):
+                    # Inline code span — leave untouched
+                    modified_parts.append(part)
+                else:
+                    # Apply replacements using regex for exact bare [[alias]]
+                    for alias_text, target_stem in replacements.items():
+                        pattern = re.compile(
+                            r"\[\[" + re.escape(alias_text) + r"\]\]"
+                        )
+                        new_link = f"[[{target_stem}|{alias_text}]]"
+                        part, count = pattern.subn(new_link, part)
+                        fixes_applied += count
+                    modified_parts.append(part)
+            modified = "".join(modified_parts)
+
+            new_lines.append(modified)
 
         try:
             with open(abs_path, "w", encoding="utf-8") as f:
-                f.write(content)
+                f.writelines(new_lines)
         except OSError as e:
             print(f"Warning: could not write {rel_path}: {e}", file=sys.stderr)
 

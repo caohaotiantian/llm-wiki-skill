@@ -35,7 +35,7 @@ Block IDs: append ` ^block-id` to any paragraph to make it linkable. For lists a
 Obsidian resolves `[[link-target]]` using this algorithm:
 
 1. **Exact filename match** (case-insensitive, ignores `.md` extension)
-2. **Normalized match** — spaces, hyphens, and underscores are treated as equivalent (`[[my note]]` matches `my-note.md`)
+2. **Fuzzy normalization** — Obsidian may treat spaces, hyphens, and underscores as equivalent in some contexts, but this is not guaranteed. Always use the exact filename as written on disk (e.g., if the file is `my-note.md`, link to `[[my-note]]`, not `[[my note]]`).
 3. **Path disambiguation** — if the link includes a path (`[[wiki/concepts/note]]`), it narrows the search
 
 > [!warning] Aliases do NOT resolve bare links

@@ -425,12 +425,11 @@ Linting ensures wiki health. Run it periodically or when the user asks.
 
 #### Dead link resolution (two-phase)
 
-Run `python <skill-dir>/scripts/lint_links.py <vault-path> --json` to get a structured report, then:
+Run `python <skill-dir>/scripts/lint_links.py <vault-path> --json` to get a structured report, then process in order:
 
-| Phase | Condition | Action |
-|-------|-----------|--------|
-| 1. Alias match | The dead link text matches an existing page's `aliases` frontmatter | Rewrite to `[[filename\|alias]]` — run with `--fix` to auto-apply |
-| 2. Stub creation | The link matches no filename and no alias | Create a stub page (`status: stub`) using the template from Ingest Step 4 |
+**Phase 1 — Alias mismatches:** The dead link text matches an existing page's `aliases` frontmatter. Rewrite the link to use pipe syntax (e.g., `[[artificial-intelligence|AI]]` instead of `[[AI]]`). Run lint_links.py with `--fix` to auto-apply these rewrites.
+
+**Phase 2 — Stub creation:** The link matches no filename and no alias. Create a stub page (`status: stub`) using the template from Ingest Step 4.
 
 Always run Phase 1 before Phase 2 — some apparent "missing pages" are actually alias mismatches that resolve to existing pages.
 
