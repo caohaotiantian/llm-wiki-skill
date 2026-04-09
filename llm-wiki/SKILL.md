@@ -233,17 +233,63 @@ One-to-two sentence summary for quick scanning.
 - [[raw/articles/source-name]] — extracted on YYYY-MM-DD
 ```
 
-### Step 4: Cross-link
+**Linking rules:**
+- The link target in `[[wikilinks]]` MUST be the exact filename of the target page (without `.md`). For example, if the file is `wiki/concepts/artificial-intelligence.md`, link to it as `[[artificial-intelligence]]`.
+- To display an alternative name, use pipe syntax: `[[artificial-intelligence|AI]]`.
+- Never write `[[alias-text]]` as a bare link — Obsidian does not resolve aliases in link targets. See `references/obsidian.md` → "Wikilink Resolution Rules" for details.
 
-- Use `[[wikilinks]]` for all references to other wiki pages
+### Step 4: Cross-link and verify
+
+- Use `[[wikilinks]]` for all references to other wiki pages. Link targets must be exact filenames — use `[[filename|display text]]` when the display text differs from the filename.
 - Scan existing pages for mentions of newly created concepts — add links there too
 - Every page should be reachable from at least one other page (no orphans)
+- **Verify every link target:** For each `[[wikilink]]` in the page, confirm the target file exists (or will be created in this batch). If it doesn't exist and isn't planned for creation, create a stub page immediately:
+
+```markdown
+---
+aliases: []
+tags: [concept]
+sources: []
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+status: stub
+---
+
+# Page Title
+
+> [!todo] Stub
+> This page was auto-created because it was referenced from other wiki pages.
+> Expand it when source material is available.
+
+## Referenced from
+- [[page-that-linked-here]]
+```
+
+Set the `tags` value to whichever type fits the context (`concept`, `entity`, `topic`, etc.) — don't leave it empty, or the stub will be invisible to Dataview queries.
 
 ### Step 5: Update coordination files
 
 - **`index.md`**: Add/update entries for all new/modified pages with one-line summaries
-- **`log.md`**: Append an entry like `## [2026-04-07 14:30] ingest | Source Title` with a bullet list of pages created/updated
 - **`.manifest.json`**: Record the source file path, SHA-256 hash, timestamp, and list of resulting wiki pages
+- **`log.md`**: Defer the log entry until after Step 5.5 validation passes. Then append `## [2026-04-07 14:30] ingest | Source Title` with a bullet list of pages created/updated
+
+### Step 5.5: Validate links
+
+Run the link validation script on all pages created and updated in this ingest:
+
+```bash
+python <skill-dir>/scripts/lint_links.py <vault-path> --files <page1.md> <page2.md> ... --json
+```
+
+Process the results:
+- **`alias_mismatches`**: Run again with `--fix` to automatically rewrite `[[alias]]` → `[[filename|alias]]`:
+  ```bash
+  python <skill-dir>/scripts/lint_links.py <vault-path> --files <page1.md> <page2.md> ... --fix
+  ```
+- **`missing`**: Create stub pages (`status: stub`) for each missing target using the template from Step 4, then re-run validation to confirm all links resolve
+- Only append the `log.md` entry (deferred from Step 5) **after** validation passes (the `clean` field in JSON output is `true`)
+
+This step catches two common issues: links that use an alias instead of the canonical filename (which Obsidian cannot resolve), and forward-references to pages that were mentioned but never created. Note: `--fix` with `--files` only repairs links in the specified files. For a complete vault-wide fix, run without `--files` or follow up with a vault-wide lint.
 
 ### Batch ingestion
 
@@ -369,7 +415,7 @@ Linting ensures wiki health. Run it periodically or when the user asks.
 
 | Check | What to look for | Auto-fixable? |
 |-------|-----------------|---------------|
-| **Dead links** | `[[wikilinks]]` pointing to non-existent pages | Create stub pages |
+| **Dead links** | `[[wikilinks]]` pointing to non-existent pages | Two-phase fix (see below) |
 | **Orphaned pages** | Pages with no incoming links | Add links from related pages or index |
 | **Stale content** | Pages whose sources have been updated since last compile | Flag for re-ingestion |
 | **Missing cross-refs** | Pages that mention concepts without linking them | Add `[[wikilinks]]` |
@@ -378,6 +424,16 @@ Linting ensures wiki health. Run it periodically or when the user asks.
 | **Empty sections** | Pages with placeholder sections that were never filled | Flag or remove |
 | **Frontmatter issues** | Missing required fields, outdated timestamps | Fix automatically |
 | **Schema drift** | Pages using outdated frontmatter schema (missing new fields, deprecated tags) | Migrate to current schema |
+
+#### Dead link resolution (two-phase)
+
+Run `python <skill-dir>/scripts/lint_links.py <vault-path> --json` to get a structured report, then process in order:
+
+**Phase 1 — Alias mismatches:** The dead link text matches an existing page's `aliases` frontmatter. Rewrite the link to use pipe syntax (e.g., `[[artificial-intelligence|AI]]` instead of `[[AI]]`). Run lint_links.py with `--fix` to auto-apply these rewrites.
+
+**Phase 2 — Stub creation:** The link matches no filename and no alias. Create a stub page (`status: stub`) using the template from Ingest Step 4.
+
+Always run Phase 1 before Phase 2 — some apparent "missing pages" are actually alias mismatches that resolve to existing pages.
 
 ### Lint output
 
@@ -419,7 +475,7 @@ Briefly report what was processed:
 
 > Auto-ingested 2 new files and re-ingested 1 modified source. Created 5 wiki pages, updated 2.
 
-No user confirmation is needed for auto-ingest — **except** when the mass update safeguard applies (modifying >10 existing pages). In that case, pause and list the affected pages before proceeding.
+For each ingested file, follow the full Ingest workflow (Steps 1–5.5), including post-ingest link validation. No user confirmation is needed for auto-ingest — **except** when the mass update safeguard applies (modifying >10 existing pages). In that case, pause and list the affected pages before proceeding.
 
 ### Explicit triggers
 
@@ -461,12 +517,13 @@ Based on the diff:
 2. **Update wiki pages**: Modify only the parts that correspond to changed sections. Don't regenerate from scratch — preserve manually added content and links from other sources
 3. **Follow the link graph**: Check pages that link to the updated pages. If the changes affect their content (e.g., a renamed concept, a corrected fact), update those too
 
-### Step 4: Finalize
+### Step 4: Validate and finalize
 
-1. **Save new snapshot**: Overwrite `<source>.snapshot.md` with the new content
-2. **Update `.manifest.json`**: New hash, timestamp, and updated page lists
-3. **Update `index.md`**: Refresh summaries for modified pages
-4. **Append to `log.md`**: Record what changed using the diff summary (e.g., "3 sections changed, 1 added")
+1. **Validate links**: Run `python <skill-dir>/scripts/lint_links.py <vault-path> --files <modified-pages...> --json` on all pages modified in this update. Fix any alias mismatches with `--fix` and create stubs for missing targets before proceeding.
+2. **Save new snapshot**: Overwrite `<source>.snapshot.md` with the new content
+3. **Update `.manifest.json`**: New hash, timestamp, and updated page lists
+4. **Update `index.md`**: Refresh summaries for modified pages
+5. **Append to `log.md`**: Record what changed using the diff summary (e.g., "3 sections changed, 1 added") — only after validation passes
 
 The depth of cascading depends on the nature of the change:
 - **Factual correction**: Update the page + any pages that cite the corrected fact
@@ -558,3 +615,4 @@ Key points:
 - `scripts/extract.py` — Document extraction using Docling (optional dependency). Output goes to `raw/extracted/` by default.
 - `scripts/scan.py` — Scans `raw/` for new, failed, or low-quality extractions. Supports periodic scanning and auto-extraction.
 - `scripts/diff_sources.py` — Structured diff between source versions for incremental re-ingestion
+- `scripts/lint_links.py` — Wikilink validator: scans for alias mismatches (`[[alias]]` that should be `[[filename|alias]]`) and missing link targets. Supports vault-wide lint and targeted post-ingest validation. Use `--fix` to auto-repair alias mismatches, `--json` for structured output.

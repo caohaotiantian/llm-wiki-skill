@@ -2,6 +2,8 @@
 
 Default templates for wiki pages. These are starting points — adapt the structure to fit the domain.
 
+> **Note:** The `[[wikilinks]]` in these templates (e.g., `[[Other Concept]]`) are **placeholders**. In actual wiki pages, always use the exact filename as the link target: `[[other-concept|Other Concept]]`. See `obsidian.md` → "Wikilink Resolution Rules" for details.
+
 ## Table of Contents
 - [Concept Page](#concept-page)
 - [Entity Page](#entity-page)
