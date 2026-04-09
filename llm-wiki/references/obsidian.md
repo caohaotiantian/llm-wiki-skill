@@ -30,6 +30,29 @@ Use `[[wikilinks]]` for all vault-internal links — Obsidian tracks renames aut
 
 Block IDs: append ` ^block-id` to any paragraph to make it linkable. For lists and blockquotes, place the ID on a separate line after the block.
 
+### Wikilink Resolution Rules
+
+Obsidian resolves `[[link-target]]` using this algorithm:
+
+1. **Exact filename match** (case-insensitive, ignores `.md` extension)
+2. **Normalized match** — spaces, hyphens, and underscores are treated as equivalent (`[[my note]]` matches `my-note.md`)
+3. **Path disambiguation** — if the link includes a path (`[[wiki/concepts/note]]`), it narrows the search
+
+> [!warning] Aliases do NOT resolve bare links
+> `[[AI]]` will **not** resolve to `Artificial Intelligence.md` even if `AI` is listed in its `aliases` frontmatter. Obsidian uses aliases **only for autocomplete suggestions** — the generated link is always `[[Artificial Intelligence|AI]]` (pipe syntax with the canonical filename as the target).
+
+**The linking rule:** Always use the **exact filename** (without `.md`) as the link target. When you want to display an alternative name, use the pipe syntax: `[[actual-filename|display text]]`.
+
+```markdown
+[[artificial-intelligence]]                   ✅ Resolves (matches filename)
+[[artificial-intelligence|AI]]                ✅ Resolves, displays "AI"
+[[AI]]                                        ❌ Dead link (no file named AI.md)
+```
+
+**Dead link behavior:** Clicking a dead link in Obsidian creates a new empty file with that name. This pollutes the wiki with unmanaged files outside the vault structure. Prevent dead links rather than relying on Obsidian to handle them.
+
+**Duplicate filenames:** If two files share the same name in different folders, a bare `[[name]]` resolves to the one closer to the vault root. Use unique filenames across the entire vault to avoid ambiguity.
+
 ### Embeds
 
 ```markdown
