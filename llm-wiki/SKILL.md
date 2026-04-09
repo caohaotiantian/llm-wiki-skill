@@ -14,6 +14,10 @@ description: >
 
 An autonomous, self-compounding knowledge base that lives in an Obsidian vault. You ingest raw sources (articles, PDFs, code, docs), the LLM synthesizes them into interlinked wiki pages, and periodic linting keeps everything consistent. The wiki is a **persistent, compounding artifact** — knowledge is pre-synthesized and cross-referenced, not re-queried from raw documents each time.
 
+## Language Preference
+
+On first interaction, ask the user what language they prefer for wiki content. Store the preference in `.manifest.json` as a top-level `language` field (e.g. `"language": "zh-CN"`). Use this language for **all wiki pages, index entries, log entries, summaries, and query answers**. Technical terms, code, and proper nouns should remain in their original language. If the user's message language differs from the stored preference, follow the stored preference for wiki content but respond to the user in whatever language they used.
+
 The human is in charge of sourcing, exploration, and asking the right questions. You do the grunt work — summarizing, cross-referencing, filing, and bookkeeping.
 
 ## Core Concepts
@@ -61,24 +65,25 @@ The subdirectories under both `raw/` and `wiki/` are **not prescribed** — they
 
 When the user asks to set up a new wiki or knowledge base:
 
-1. **Check dependencies** — before anything else, verify the current Python environment has the optional packages:
+1. **Ask language preference** — ask the user what language they want wiki content written in. Store it in `.manifest.json` as `"language": "<code>"` (e.g. `"zh-CN"`, `"en"`, `"ja"`). If the user doesn't specify, default to the language they're currently using.
+2. **Check dependencies** — verify the current Python environment has the optional packages:
    ```python
    python3 -c "import docling; import pip_system_certs; print('Dependencies OK')"
    ```
    - **If both imports succeed**: skip step 2 — use the current environment as-is.
    - **If any import fails**: inform the user. These are optional — the skill works without them (the agent can read files directly and watch for changes manually). Ask whether they'd like to install into a virtual environment. Do not install without confirmation.
-2. **Set up a Python virtual environment** (only if step 1 failed and user agreed):
+3. **Set up a Python virtual environment** (only if step 2 failed and user agreed):
    ```bash
    python3 -m venv <vault-path>/.venv
    <vault-path>/.venv/bin/pip install docling pip-system-certs
    ```
    On Windows, use `<vault-path>\.venv\Scripts\pip` instead. This keeps the skill's dependencies isolated from the system Python.
-3. **Create the vault directory** at the user's specified path (or current directory)
-4. **Initialize the structure** — create `raw/`, `wiki/`, `index.md`, `log.md`, `schema.md`, and `raw/.manifest.json`
-5. **Initialize `.obsidian/`** with minimal config so Obsidian recognizes it as a vault
-6. **Register with Obsidian** (if installed) — open the vault using `open "obsidian://open?path=<vault-path>"`. Skip this step if Obsidian is not available; the wiki works as plain markdown files.
-7. **Write `schema.md`** — copy the contents of `references/schema.md` into the vault as `schema.md`
-8. **Add the vault directory to `.gitignore`** if the vault is inside a git repo that shouldn't track it
+4. **Create the vault directory** at the user's specified path (or current directory)
+5. **Initialize the structure** — create `raw/`, `wiki/`, `index.md`, `log.md`, `schema.md`, and `raw/.manifest.json` (include the `language` field from step 1)
+6. **Initialize `.obsidian/`** with minimal config so Obsidian recognizes it as a vault
+7. **Register with Obsidian** (if installed) — open the vault using `open "obsidian://open?path=<vault-path>"`. Skip this step if Obsidian is not available; the wiki works as plain markdown files.
+8. **Write `schema.md`** — copy the contents of `references/schema.md` into the vault as `schema.md`
+9. **Add the vault directory to `.gitignore`** if the vault is inside a git repo that shouldn't track it
 
 ### Minimal `.obsidian/` config
 
@@ -132,6 +137,7 @@ The log uses a strict format so it can be reliably parsed by grep. Never deviate
 
 ```json
 {
+  "language": "en",
   "sources": [],
   "version": 1
 }
