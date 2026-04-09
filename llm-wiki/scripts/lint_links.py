@@ -50,11 +50,17 @@ def parse_frontmatter_aliases(content: str) -> list[str]:
 
     fm = match.group(1)
 
-    # Try inline format: aliases: [a, b, c]
+    # Try inline format: aliases: [a, b, c] or aliases: ["Smith, John", b]
     inline = re.search(r"^aliases:\s*\[([^\]]*)\]", fm, re.MULTILINE)
     if inline:
         raw = inline.group(1)
-        return [a.strip().strip("\"'") for a in raw.split(",") if a.strip()]
+        # Parse respecting quoted values (commas inside quotes are not delimiters)
+        aliases = []
+        for m in re.finditer(r'"([^"]*?)"|\'([^\']*?)\'|([^,\s][^,]*)', raw):
+            val = (m.group(1) or m.group(2) or m.group(3) or "").strip()
+            if val:
+                aliases.append(val)
+        return aliases
 
     # Try list format: aliases:\n  - a\n  - b
     list_match = re.search(r"^aliases:\s*\n((?:\s+-\s+.+\n?)+)", fm, re.MULTILINE)
@@ -127,8 +133,10 @@ def build_resolution_index(vault_path: Path) -> dict:
 
                 for alias in parse_frontmatter_aliases(content):
                     norm_alias = normalize_for_matching(alias)
-                    if norm_alias and norm_alias not in by_filename:
-                        by_alias[norm_alias] = rel_path
+                    if norm_alias:
+                        # Don't overwrite — first alias registration wins
+                        if norm_alias not in by_alias:
+                            by_alias[norm_alias] = rel_path
 
     return {"by_filename": by_filename, "by_alias": by_alias}
 
@@ -162,12 +170,13 @@ def scan_file_for_links(file_path: str) -> list[dict]:
     try:
         with open(file_path, "r", encoding="utf-8", errors="replace") as f:
             lines = f.readlines()
-    except OSError:
+    except OSError as e:
+        print(f"Warning: cannot read {file_path}: {e}", file=sys.stderr)
         return []
 
     results = []
     in_frontmatter = False
-    in_code_block = False
+    code_fence_marker = ""  # tracks the opening fence (e.g., "```" or "````")
 
     for i, line in enumerate(lines, start=1):
         # Skip frontmatter — links in YAML values aren't rendered as wikilinks
@@ -179,12 +188,24 @@ def scan_file_for_links(file_path: str) -> list[dict]:
                 in_frontmatter = False
             continue
 
-        # Skip fenced code blocks — links inside ``` are not rendered
+        # Skip fenced code blocks — track opening fence to handle nested fences
         stripped = line.strip()
-        if stripped.startswith("```") or stripped.startswith("~~~"):
-            in_code_block = not in_code_block
-            continue
-        if in_code_block:
+        if not code_fence_marker:
+            # Not in a code block — check for opening fence
+            fence_match = re.match(r"^(`{3,}|~{3,})", stripped)
+            if fence_match:
+                code_fence_marker = fence_match.group(1)
+                continue
+        else:
+            # In a code block — only close on a fence of same char and >= length
+            fence_char = code_fence_marker[0]
+            fence_len = len(code_fence_marker)
+            close_match = re.match(
+                r"^" + re.escape(fence_char) + r"{" + str(fence_len) + r",}\s*$",
+                stripped,
+            )
+            if close_match:
+                code_fence_marker = ""
             continue
 
         # Strip inline code spans — links inside `backticks` are not rendered
@@ -312,7 +333,7 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
 
         new_lines = []
         in_frontmatter = False
-        in_code_block = False
+        code_fence_marker = ""
 
         for i, line in enumerate(lines):
             # Skip frontmatter
@@ -326,13 +347,23 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
                 new_lines.append(line)
                 continue
 
-            # Skip fenced code blocks
+            # Skip fenced code blocks (track fence marker for nested fences)
             stripped = line.strip()
-            if stripped.startswith("```") or stripped.startswith("~~~"):
-                in_code_block = not in_code_block
-                new_lines.append(line)
-                continue
-            if in_code_block:
+            if not code_fence_marker:
+                fence_match = re.match(r"^(`{3,}|~{3,})", stripped)
+                if fence_match:
+                    code_fence_marker = fence_match.group(1)
+                    new_lines.append(line)
+                    continue
+            else:
+                fence_char = code_fence_marker[0]
+                fence_len = len(code_fence_marker)
+                close_match = re.match(
+                    r"^" + re.escape(fence_char) + r"{" + str(fence_len) + r",}\s*$",
+                    stripped,
+                )
+                if close_match:
+                    code_fence_marker = ""
                 new_lines.append(line)
                 continue
 
