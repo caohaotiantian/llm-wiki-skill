@@ -259,3 +259,151 @@ def resolve_links(
         },
         "clean": len(alias_mismatches) == 0 and len(missing_list) == 0,
     }
+
+
+def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
+    """Rewrite [[alias]] → [[filename|alias]] in-place for each mismatch.
+
+    Returns the number of fixes applied.
+    """
+    # Group mismatches by file for efficient processing
+    by_file: dict[str, list[dict]] = {}
+    for m in mismatches:
+        by_file.setdefault(m["file"], []).append(m)
+
+    fixes_applied = 0
+
+    for rel_path, file_mismatches in by_file.items():
+        abs_path = os.path.join(str(vault_path), rel_path)
+        try:
+            content = open(abs_path, "r", encoding="utf-8").read()
+        except OSError:
+            continue
+
+        for m in file_mismatches:
+            target_stem = os.path.splitext(os.path.basename(m["target_file"]))[0]
+            old_link = f"[[{m['link']}]]"
+            new_link = f"[[{target_stem}|{m['link']}]]"
+            if old_link in content:
+                content = content.replace(old_link, new_link, 1)
+                fixes_applied += 1
+
+        try:
+            with open(abs_path, "w", encoding="utf-8") as f:
+                f.write(content)
+        except OSError:
+            pass
+
+    return fixes_applied
+
+
+def print_report(report: dict, json_output: bool = False) -> None:
+    """Print the resolution report in human-readable or JSON format."""
+    if json_output:
+        print(json.dumps(report, indent=2))
+        return
+
+    summary = report["summary"]
+
+    if report["clean"]:
+        print(f"All {summary['total_links']} links OK. No issues found.")
+        return
+
+    print(f"Scanned {summary['total_links']} links: "
+          f"{summary['resolved']} resolved, "
+          f"{summary['alias_mismatches']} alias mismatches, "
+          f"{summary['missing']} missing.\n")
+
+    if report["alias_mismatches"]:
+        print(f"ALIAS MISMATCHES ({len(report['alias_mismatches'])}):")
+        for m in report["alias_mismatches"]:
+            print(f"  {m['file']}:{m['line']}  [[{m['link']}]]  →  {m['suggested']}")
+        print()
+
+    if report["missing"]:
+        print(f"MISSING PAGES ({len(report['missing'])}):")
+        for m in report["missing"]:
+            refs = ", ".join(m["referenced_from"][:3])
+            suffix = f" (+{len(m['referenced_from']) - 3} more)" if len(m["referenced_from"]) > 3 else ""
+            print(f"  [[{m['link']}]]  referenced from: {refs}{suffix}")
+        print()
+
+
+def collect_wiki_files(vault_path: Path) -> list[str]:
+    """Collect all .md files under wiki/ (relative paths)."""
+    wiki_dir = vault_path / "wiki"
+    if not wiki_dir.is_dir():
+        return []
+
+    results = []
+    for root, dirs, files in os.walk(str(wiki_dir)):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for fname in files:
+            if fname.endswith(".md") and not fname.endswith(".snapshot.md"):
+                full_path = os.path.join(root, fname)
+                results.append(os.path.relpath(full_path, vault_path))
+    return results
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Scan wiki pages for wikilink issues: alias mismatches and missing targets.",
+    )
+    parser.add_argument("vault_path", help="Path to the wiki vault")
+    parser.add_argument(
+        "--files", nargs="+", default=None, metavar="FILE",
+        help="Scan only these files (vault-relative paths). Default: all files in wiki/",
+    )
+    parser.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Output report as JSON",
+    )
+    parser.add_argument(
+        "--fix", action="store_true",
+        help="Auto-fix alias mismatches by rewriting [[alias]] → [[filename|alias]]",
+    )
+
+    args = parser.parse_args()
+    vault_path = Path(args.vault_path).resolve()
+
+    if not vault_path.is_dir():
+        print(f"Error: {vault_path} is not a directory.", file=sys.stderr)
+        sys.exit(1)
+
+    wiki_dir = vault_path / "wiki"
+    if not wiki_dir.is_dir():
+        print(f"Error: {wiki_dir} does not exist. Is this a valid wiki vault?",
+              file=sys.stderr)
+        sys.exit(1)
+
+    # Build resolution index from all files
+    index = build_resolution_index(vault_path)
+
+    # Determine which files to scan
+    if args.files:
+        files_to_scan = args.files
+    else:
+        files_to_scan = collect_wiki_files(vault_path)
+
+    if not files_to_scan:
+        print("No files to scan.")
+        sys.exit(0)
+
+    # Resolve links
+    report = resolve_links(vault_path, index, files_to_scan)
+
+    # Auto-fix if requested
+    if args.fix and report["alias_mismatches"]:
+        fixes = fix_alias_mismatches(vault_path, report["alias_mismatches"])
+        if not args.json_output:
+            print(f"Fixed {fixes} alias mismatch(es).\n")
+        # Re-scan after fixing to get updated report
+        index = build_resolution_index(vault_path)
+        report = resolve_links(vault_path, index, files_to_scan)
+
+    print_report(report, json_output=args.json_output)
+    sys.exit(0 if report["clean"] else 1)
+
+
+if __name__ == "__main__":
+    main()
