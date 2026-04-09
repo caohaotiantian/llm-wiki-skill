@@ -99,7 +99,8 @@ llm-wiki-skill/
 │   └── scripts/
 │       ├── extract.py       # Document extraction (optional Docling integration)
 │       ├── scan.py          # Scan raw/ for new, failed, or low-quality extractions
-│       └── diff_sources.py  # Structured diff for incremental re-ingestion
+│       ├── diff_sources.py  # Structured diff for incremental re-ingestion
+│       └── lint_links.py    # Wikilink validator (alias mismatches, missing pages)
 ├── INSTALL.md               # Installation instructions for all agent platforms
 ├── LICENSE                  # MIT
 └── README.md                # This file

@@ -248,7 +248,7 @@ One-to-two sentence summary for quick scanning.
 ```markdown
 ---
 aliases: []
-tags: []
+tags: [concept]
 sources: []
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
@@ -264,6 +264,8 @@ status: stub
 ## Referenced from
 - [[page-that-linked-here]]
 ```
+
+Set the `tags` value to whichever type fits the context (`concept`, `entity`, `topic`, etc.) — don't leave it empty, or the stub will be invisible to Dataview queries.
 
 ### Step 5: Update coordination files
 

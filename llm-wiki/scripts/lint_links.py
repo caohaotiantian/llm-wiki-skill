@@ -23,10 +23,12 @@ from pathlib import Path
 
 
 def normalize_for_matching(name: str) -> str:
-    """Normalize a name for Obsidian-style matching.
+    """Normalize a name for fuzzy matching.
 
-    Obsidian treats spaces, hyphens, and underscores as equivalent
-    and matches case-insensitively.
+    Case-insensitive, treats spaces/hyphens/underscores as equivalent.
+    Note: Obsidian's exact normalization behavior is not fully documented
+    and may vary. This is a lenient approximation — it may resolve links
+    that Obsidian itself would not. Prefer exact filenames in wikilinks.
     """
     return re.sub(r"[\s\-_]+", " ", name).strip().lower()
 
@@ -43,8 +45,8 @@ def parse_frontmatter_aliases(content: str) -> list[str]:
     # Normalize CRLF → LF for Windows compatibility
     content = content.replace("\r\n", "\n").replace("\r", "\n")
 
-    # Extract frontmatter block
-    match = re.match(r"^---\s*\n(.*?)\n---", content, re.DOTALL)
+    # Extract frontmatter block (--- or ... as closing delimiter)
+    match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content, re.DOTALL)
     if not match:
         return []
 
@@ -230,17 +232,21 @@ def resolve_links(
 
     Returns:
         {
-            "alias_mismatches": [{"file", "line", "link", "target_file", "suggested"}],
-            "missing": [{"file", "line", "link", "referenced_from"}],
-            "summary": {"total_links", "resolved", "alias_mismatches", "missing"},
+            "alias_mismatches": [{"file": str, "line": int, "link": str, "target_file": str, "suggested": str}],
+            "missing": [{"link": str, "referenced_from": ["path:line", ...]}],
+            "summary": {"total_links": int, "resolved": int, "alias_mismatches": int,
+                         "missing": int, "missing_unique_targets": int},
             "clean": bool,
         }
+    Note: total_links == resolved + alias_mismatches + missing (all count occurrences).
+    missing_unique_targets counts distinct targets (len of the missing list).
     """
     by_filename = index["by_filename"]
     by_alias = index["by_alias"]
 
     alias_mismatches = []
     missing_links: dict[str, dict] = {}  # keyed by normalized target
+    missing_occurrences = 0
     resolved_count = 0
     total_count = 0
 
@@ -272,6 +278,7 @@ def resolve_links(
                 continue
 
             # Phase 3: Unresolved
+            missing_occurrences += 1
             if norm_target not in missing_links:
                 missing_links[norm_target] = {
                     "link": link["target"],
@@ -296,7 +303,8 @@ def resolve_links(
             "total_links": total_count,
             "resolved": resolved_count,
             "alias_mismatches": len(alias_mismatches),
-            "missing": len(missing_list),
+            "missing": missing_occurrences,
+            "missing_unique_targets": len(missing_list),
         },
         "clean": len(alias_mismatches) == 0 and len(missing_list) == 0,
     }
@@ -377,9 +385,10 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
                     modified_parts.append(part)
                 else:
                     # Apply replacements using regex for exact bare [[alias]]
+                    # (?<!!) prevents matching embeds like ![[alias]]
                     for alias_text, target_stem in replacements.items():
                         pattern = re.compile(
-                            r"\[\[" + re.escape(alias_text) + r"\]\]"
+                            r"(?<!!)\[\[" + re.escape(alias_text) + r"\]\]"
                         )
                         new_link = f"[[{target_stem}|{alias_text}]]"
                         part, count = pattern.subn(new_link, part)
