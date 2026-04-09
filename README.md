@@ -1,12 +1,14 @@
 # LLM Wiki Skill
 
+[English](README.md) | [中文](README-cn.md)
+
 An agent skill that builds and maintains an autonomous, self-compounding knowledge base inside an [Obsidian](https://obsidian.md) vault.
 
 Inspired by [Andrej Karpathy's LLM Wiki pattern](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — the idea that an LLM can maintain a persistent wiki where knowledge is pre-synthesized and cross-referenced, not re-queried from raw documents each time.
 
 ## What It Does
 
-You feed it source documents (markdown, PDFs, code, docx, etc.). The agent synthesizes them into interlinked wiki pages with `[[wikilinks]]`, tracks provenance, and maintains consistency through periodic linting.
+You feed it source documents — markdown, PDFs, Word docs, PowerPoint, spreadsheets, HTML, images, and more. The agent synthesizes them into interlinked wiki pages with `[[wikilinks]]`, tracks provenance, and maintains consistency through periodic linting.
 
 **Three core operations:**
 
@@ -117,6 +119,24 @@ llm-wiki-skill/
 ├── LICENSE                  # MIT
 └── README.md                # This file
 ```
+
+## How This Differs from Karpathy's Gist
+
+Karpathy's [original gist](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) describes the pattern at a high level — it's intentionally abstract and leaves implementation details to the user and their LLM. This project is a concrete, production-oriented implementation that adds several capabilities not covered in the gist or other community implementations (e.g. [Astro-Han/karpathy-llm-wiki](https://github.com/Astro-Han/karpathy-llm-wiki)):
+
+| Capability | Karpathy's Gist | This Project |
+|---|---|---|
+| Document extraction (PDF, DOCX, PPTX, images, ...) | User handles manually (e.g. Obsidian Web Clipper) | Built-in via [Docling](https://github.com/docling-project/docling) |
+| Change detection | Not covered | File watcher + SHA-256 hash tracking in `.manifest.json` |
+| Incremental re-ingestion | Not covered | Section-level structured diffs — only changed parts are reprocessed |
+| Source-to-page dependency tracking | Not covered | `.manifest.json` maps each source to the wiki pages it produced |
+| Mass update safeguard | Not covered | Pauses for confirmation when >10 existing pages would be modified |
+| Session scoping | Not covered | Prevents infinite reprocessing loops across conversations |
+| Page type taxonomy | Loosely mentioned | Five structured types: concepts, entities, topics, sources, queries |
+| Provenance markers | Not covered | Inline footnotes: `^[extracted]`, `^[inferred]`, `^[ambiguous]` |
+| Obsidian integration | Tips only | Full reference: URI scheme, CLI commands, vault config, plugins |
+
+The gist also suggests features this project does not yet cover: dedicated search tooling (e.g. [qmd](https://github.com/tobi/qmd)) for large wikis, and varied output formats (Marp slide decks, matplotlib charts).
 
 ## Credits
 
