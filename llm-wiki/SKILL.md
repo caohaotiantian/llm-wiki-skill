@@ -410,7 +410,7 @@ Linting ensures wiki health. Run it periodically or when the user asks.
 
 | Check | What to look for | Auto-fixable? |
 |-------|-----------------|---------------|
-| **Dead links** | `[[wikilinks]]` pointing to non-existent pages | Create stub pages |
+| **Dead links** | `[[wikilinks]]` pointing to non-existent pages | Two-phase fix (see below) |
 | **Orphaned pages** | Pages with no incoming links | Add links from related pages or index |
 | **Stale content** | Pages whose sources have been updated since last compile | Flag for re-ingestion |
 | **Missing cross-refs** | Pages that mention concepts without linking them | Add `[[wikilinks]]` |
@@ -419,6 +419,17 @@ Linting ensures wiki health. Run it periodically or when the user asks.
 | **Empty sections** | Pages with placeholder sections that were never filled | Flag or remove |
 | **Frontmatter issues** | Missing required fields, outdated timestamps | Fix automatically |
 | **Schema drift** | Pages using outdated frontmatter schema (missing new fields, deprecated tags) | Migrate to current schema |
+
+#### Dead link resolution (two-phase)
+
+Run `python <skill-dir>/scripts/lint_links.py <vault-path> --json` to get a structured report, then:
+
+| Phase | Condition | Action |
+|-------|-----------|--------|
+| 1. Alias match | The dead link text matches an existing page's `aliases` frontmatter | Rewrite to `[[filename\|alias]]` — run with `--fix` to auto-apply |
+| 2. Stub creation | The link matches no filename and no alias | Create a stub page (`status: stub`) using the template from Ingest Step 4 |
+
+Always run Phase 1 before Phase 2 — some apparent "missing pages" are actually alias mismatches that resolve to existing pages.
 
 ### Lint output
 
