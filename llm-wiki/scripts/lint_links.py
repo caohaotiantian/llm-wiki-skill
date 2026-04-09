@@ -122,3 +122,140 @@ def build_resolution_index(vault_path: Path) -> dict:
                         by_alias[norm_alias] = rel_path
 
     return {"by_filename": by_filename, "by_alias": by_alias}
+
+
+# Matches [[target]], [[target|display]], [[target#heading]], [[target#^block]]
+# Does NOT match embeds (![[...]]) — those are handled separately
+WIKILINK_RE = re.compile(r"(?<!!)\[\[([^\[\]]+?)\]\]")
+
+
+def extract_link_target(wikilink_content: str) -> str:
+    """Extract the resolution target from wikilink inner content.
+
+    [[target]] → target
+    [[target|display]] → target
+    [[target#heading]] → target
+    [[target#^block-id]] → target
+    [[target#heading|display]] → target
+    """
+    # Remove display text (after |)
+    target = wikilink_content.split("|")[0]
+    # Remove heading/block reference (after #)
+    target = target.split("#")[0]
+    return target.strip()
+
+
+def scan_file_for_links(file_path: str) -> list[dict]:
+    """Extract all wikilinks from a file with line numbers.
+
+    Returns list of {"line": int, "raw": str, "target": str}
+    """
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return []
+
+    results = []
+    in_frontmatter = False
+    frontmatter_closed = False
+
+    for i, line in enumerate(lines, start=1):
+        # Skip frontmatter — links in YAML values aren't rendered as wikilinks
+        if i == 1 and line.strip() == "---":
+            in_frontmatter = True
+            continue
+        if in_frontmatter:
+            if line.strip() == "---":
+                in_frontmatter = False
+                frontmatter_closed = True
+            continue
+
+        for match in WIKILINK_RE.finditer(line):
+            raw = match.group(1)
+            target = extract_link_target(raw)
+            if target:
+                results.append({"line": i, "raw": raw, "target": target})
+
+    return results
+
+
+def resolve_links(
+    vault_path: Path,
+    index: dict,
+    files_to_scan: list[str],
+) -> dict:
+    """Resolve all wikilinks in the given files against the index.
+
+    Returns:
+        {
+            "alias_mismatches": [{"file", "line", "link", "target_file", "suggested"}],
+            "missing": [{"file", "line", "link", "referenced_from"}],
+            "summary": {"total_links", "resolved", "alias_mismatches", "missing"},
+            "clean": bool,
+        }
+    """
+    by_filename = index["by_filename"]
+    by_alias = index["by_alias"]
+
+    alias_mismatches = []
+    missing_links: dict[str, dict] = {}  # keyed by normalized target
+    resolved_count = 0
+    total_count = 0
+
+    for file_path in files_to_scan:
+        abs_path = os.path.join(str(vault_path), file_path) if not os.path.isabs(file_path) else file_path
+        rel_path = os.path.relpath(abs_path, vault_path)
+        links = scan_file_for_links(abs_path)
+
+        for link in links:
+            total_count += 1
+            norm_target = normalize_for_matching(link["target"])
+
+            # Phase 1: Does it match a filename?
+            if norm_target in by_filename:
+                resolved_count += 1
+                continue
+
+            # Phase 2: Does it match an alias?
+            if norm_target in by_alias:
+                target_file = by_alias[norm_target]
+                target_stem = os.path.splitext(os.path.basename(target_file))[0]
+                alias_mismatches.append({
+                    "file": rel_path,
+                    "line": link["line"],
+                    "link": link["target"],
+                    "target_file": target_file,
+                    "suggested": f"[[{target_stem}|{link['target']}]]",
+                })
+                continue
+
+            # Phase 3: Unresolved
+            if norm_target not in missing_links:
+                missing_links[norm_target] = {
+                    "link": link["target"],
+                    "referenced_from": [],
+                }
+            ref_entry = f"{rel_path}:{link['line']}"
+            if ref_entry not in missing_links[norm_target]["referenced_from"]:
+                missing_links[norm_target]["referenced_from"].append(ref_entry)
+
+    missing_list = [
+        {
+            "link": v["link"],
+            "referenced_from": v["referenced_from"],
+        }
+        for v in missing_links.values()
+    ]
+
+    return {
+        "alias_mismatches": alias_mismatches,
+        "missing": missing_list,
+        "summary": {
+            "total_links": total_count,
+            "resolved": resolved_count,
+            "alias_mismatches": len(alias_mismatches),
+            "missing": len(missing_list),
+        },
+        "clean": len(alias_mismatches) == 0 and len(missing_list) == 0,
+    }
