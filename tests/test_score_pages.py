@@ -7,7 +7,7 @@ import os
 # Add scripts dir to path so we can import score_pages
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "llm-wiki", "scripts"))
 
-from score_pages import normalize_values, compute_score, parse_weight_and_tags, write_computed_score
+from score_pages import normalize_values, compute_score, parse_weight_and_tags, write_computed_score, count_incoming_links
 
 
 def test_normalize_values_basic():
@@ -149,3 +149,60 @@ def test_write_computed_score_no_frontmatter():
     content = "# Page\n\nNo frontmatter here.\n"
     result = write_computed_score(content, 5.0)
     assert result == content
+
+
+def test_count_incoming_links_basic(tmp_path):
+    """Counts incoming [[wikilinks]] per target page."""
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    (wiki / "a.md").write_text("---\ntags: [concept]\n---\n# A\nSee [[b]] and [[c]].\n")
+    (wiki / "b.md").write_text("---\ntags: [concept]\n---\n# B\nRelated to [[a]] and [[c]].\n")
+    (wiki / "c.md").write_text("---\ntags: [concept]\n---\n# C\nStandalone.\n")
+
+    counts = count_incoming_links(tmp_path)
+    assert counts.get("wiki/a.md", 0) == 1
+    assert counts.get("wiki/b.md", 0) == 1
+    assert counts.get("wiki/c.md", 0) == 2
+
+
+def test_count_incoming_links_pipe_syntax(tmp_path):
+    """Pipe syntax [[target|display]] counts toward target."""
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    (wiki / "microservices.md").write_text("---\ntags: [concept]\n---\n# MS\n")
+    (wiki / "overview.md").write_text(
+        "---\ntags: [topic]\n---\n# Overview\nSee [[microservices|Microservices Architecture]].\n"
+    )
+
+    counts = count_incoming_links(tmp_path)
+    assert counts.get("wiki/microservices.md", 0) == 1
+
+
+def test_count_incoming_links_skips_code_blocks(tmp_path):
+    """Links inside fenced code blocks are not counted."""
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    (wiki / "a.md").write_text("---\ntags: [concept]\n---\n# A\n```\n[[b]]\n```\n")
+    (wiki / "b.md").write_text("---\ntags: [concept]\n---\n# B\n")
+
+    counts = count_incoming_links(tmp_path)
+    assert counts.get("wiki/b.md", 0) == 0
+
+
+def test_count_incoming_links_heading_links(tmp_path):
+    """[[target#heading]] counts toward target page."""
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    (wiki / "a.md").write_text("---\ntags: [concept]\n---\n# A\nSee [[b#details]].\n")
+    (wiki / "b.md").write_text("---\ntags: [concept]\n---\n# B\n## Details\n")
+
+    counts = count_incoming_links(tmp_path)
+    assert counts.get("wiki/b.md", 0) == 1
+
+
+def test_count_incoming_links_empty_wiki(tmp_path):
+    """Empty wiki returns empty dict."""
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    counts = count_incoming_links(tmp_path)
+    assert counts == {}

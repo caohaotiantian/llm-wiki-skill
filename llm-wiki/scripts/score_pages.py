@@ -14,7 +14,9 @@ Usage:
 
 from __future__ import annotations
 
+import os
 import re
+from pathlib import Path
 
 
 PRIORITY_TAGS = {"pinned", "priority/high", "priority/medium", "priority/low"}
@@ -128,3 +130,109 @@ def compute_score(
         + tag_bonus
     )
     return round(score, 1)
+
+
+# Matches [[target]], [[target|display]], [[target#heading]]
+# Does NOT match embeds (![[...]])
+WIKILINK_RE = re.compile(r"(?<!!)\[\[([^\[\]]+?)\]\]")
+
+
+def _extract_target(wikilink_content: str) -> str:
+    """Extract resolution target: [[target|display]] -> target, [[target#h]] -> target."""
+    target = wikilink_content.split("|")[0].split("#")[0].strip()
+    if target.lower().endswith(".md"):
+        target = target[:-3]
+    return target
+
+
+def _collect_wiki_files(vault_path: Path) -> dict[str, str]:
+    """Collect all .md files under wiki/.
+
+    Returns {normalized_stem: relative_path} for resolving link targets.
+    """
+    wiki_dir = vault_path / "wiki"
+    if not wiki_dir.is_dir():
+        return {}
+
+    files: dict[str, str] = {}
+    for root, dirs, filenames in os.walk(str(wiki_dir)):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for fname in filenames:
+            if fname.endswith(".md") and not fname.endswith(".snapshot.md"):
+                full = os.path.join(root, fname)
+                rel = os.path.relpath(full, vault_path)
+                stem = os.path.splitext(fname)[0].lower()
+                files[stem] = rel
+    return files
+
+
+def _scan_links_in_file(file_path: str) -> list[str]:
+    """Extract all wikilink targets from a file, skipping frontmatter and code blocks."""
+    try:
+        with open(file_path, "r", encoding="utf-8", errors="replace") as f:
+            lines = f.readlines()
+    except OSError:
+        return []
+
+    targets = []
+    in_frontmatter = False
+    code_fence_marker = ""
+
+    for i, line in enumerate(lines):
+        if i == 0 and line.strip() == "---":
+            in_frontmatter = True
+            continue
+        if in_frontmatter:
+            if line.strip() in ("---", "..."):
+                in_frontmatter = False
+            continue
+
+        stripped = line.strip()
+        if not code_fence_marker:
+            fence_match = re.match(r"^(`{3,}|~{3,})", stripped)
+            if fence_match:
+                code_fence_marker = fence_match.group(1)
+                continue
+        else:
+            fence_char = code_fence_marker[0]
+            fence_len = len(code_fence_marker)
+            close_match = re.match(
+                r"^" + re.escape(fence_char) + r"{" + str(fence_len) + r",}\s*$",
+                stripped,
+            )
+            if close_match:
+                code_fence_marker = ""
+            continue
+
+        # Strip inline code spans
+        scannable = re.sub(r"`[^`]+`", "", line)
+        for match in WIKILINK_RE.finditer(scannable):
+            target = _extract_target(match.group(1))
+            if target:
+                targets.append(target)
+
+    return targets
+
+
+def count_incoming_links(vault_path: Path) -> dict[str, int]:
+    """Count incoming wikilinks for each wiki page.
+
+    Returns {relative_path: count} for all pages that have at least one incoming link.
+    """
+    vault_path = Path(vault_path)
+    file_index = _collect_wiki_files(vault_path)
+    if not file_index:
+        return {}
+
+    counts: dict[str, int] = {}
+
+    for stem, rel_path in file_index.items():
+        abs_path = os.path.join(str(vault_path), rel_path)
+        targets = _scan_links_in_file(abs_path)
+        for target in targets:
+            norm = target.lower()
+            if norm in file_index:
+                target_path = file_index[norm]
+                counts[target_path] = counts.get(target_path, 0) + 1
+
+    return counts
