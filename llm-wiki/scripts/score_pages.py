@@ -14,10 +14,12 @@ Usage:
 
 from __future__ import annotations
 
+import argparse
 import copy
 import json
 import os
 import re
+import sys
 from pathlib import Path
 
 
@@ -381,3 +383,61 @@ def score_all_pages(
         "top": top,
         "zero_activity": sorted(zero_activity),
     }
+
+
+def print_report(result, json_output=False):
+    """Print scoring results in human-readable or JSON format."""
+    if json_output:
+        print(json.dumps(result, indent=2))
+        return
+
+    count = result["scored"]
+    label = "page" if count == 1 else "pages"
+    print(f"Scored {count} {label}.\n")
+
+    if result["top"]:
+        print("Top pages by score:")
+        for entry in result["top"]:
+            print(f"  {entry['computed_score']:>5.1f}  {entry['page']}")
+        print()
+
+    if result["zero_activity"]:
+        print(f"Zero activity ({len(result['zero_activity'])} pages):")
+        for page in result["zero_activity"]:
+            print(f"  {page}")
+        print()
+
+
+def main():
+    parser = argparse.ArgumentParser(
+        description="Compute composite page scores for wiki pages.",
+    )
+    parser.add_argument("vault_path", help="Path to the wiki vault")
+    parser.add_argument(
+        "--pages", nargs="+", default=None, metavar="PAGE",
+        help="Score only these pages (vault-relative paths). Default: all wiki pages.",
+    )
+    parser.add_argument(
+        "--json", dest="json_output", action="store_true",
+        help="Output results as JSON",
+    )
+
+    args = parser.parse_args()
+    vault_path = Path(args.vault_path).resolve()
+
+    if not vault_path.is_dir():
+        print(f"Error: {vault_path} is not a directory.", file=sys.stderr)
+        sys.exit(1)
+
+    wiki_dir = vault_path / "wiki"
+    if not wiki_dir.is_dir():
+        print(f"Error: {wiki_dir} does not exist. Is this a valid wiki vault?",
+              file=sys.stderr)
+        sys.exit(1)
+
+    result = score_all_pages(vault_path, target_pages=args.pages)
+    print_report(result, json_output=args.json_output)
+
+
+if __name__ == "__main__":
+    main()

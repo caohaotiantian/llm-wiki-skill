@@ -2,6 +2,7 @@
 """Tests for score_pages.py scoring logic."""
 
 import json
+import subprocess
 import sys
 import os
 
@@ -347,3 +348,52 @@ def test_score_all_pages_zero_activity(tmp_path):
     result = score_all_pages(tmp_path)
 
     assert "wiki/a.md" in result["zero_activity"]
+
+
+def test_cli_full_recalc(tmp_path):
+    """CLI runs full recalc and prints summary."""
+    _make_vault(tmp_path, {
+        "a.md": "---\ntags: [concept]\n---\n# A\nSee [[b]].\n",
+        "b.md": "---\ntags: [concept]\n---\n# B\n",
+    })
+
+    script = os.path.join(os.path.dirname(__file__), "..", "llm-wiki", "scripts", "score_pages.py")
+    result = subprocess.run(
+        [sys.executable, script, str(tmp_path)],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    assert "Scored 2 pages" in result.stdout
+
+
+def test_cli_json_output(tmp_path):
+    """CLI --json outputs valid JSON."""
+    _make_vault(tmp_path, {
+        "a.md": "---\ntags: [concept]\n---\n# A\n",
+    })
+
+    script = os.path.join(os.path.dirname(__file__), "..", "llm-wiki", "scripts", "score_pages.py")
+    result = subprocess.run(
+        [sys.executable, script, str(tmp_path), "--json"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    data = json.loads(result.stdout)
+    assert "scored" in data
+    assert "top" in data
+
+
+def test_cli_pages_flag(tmp_path):
+    """CLI --pages only scores specified pages."""
+    _make_vault(tmp_path, {
+        "a.md": "---\ntags: [concept]\n---\n# A\n",
+        "b.md": "---\ntags: [concept]\n---\n# B\n",
+    })
+
+    script = os.path.join(os.path.dirname(__file__), "..", "llm-wiki", "scripts", "score_pages.py")
+    result = subprocess.run(
+        [sys.executable, script, str(tmp_path), "--pages", "wiki/a.md"],
+        capture_output=True, text=True,
+    )
+    assert result.returncode == 0
+    assert "Scored 1 page" in result.stdout
