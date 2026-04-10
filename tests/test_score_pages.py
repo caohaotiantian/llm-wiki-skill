@@ -516,3 +516,16 @@ def test_load_stats_missing_keys(tmp_path):
     stats = load_stats(tmp_path)
     assert "weights" in stats
     assert "tag_bonuses" in stats
+
+
+def test_score_all_pages_incremental_zero_activity_is_partial(tmp_path):
+    """zero_activity in incremental mode only covers target pages, not full vault."""
+    _make_vault(tmp_path, {
+        "a.md": "---\ntags: [concept]\n---\n# A\n",
+        "b.md": "---\ntags: [concept]\n---\n# B\n",
+    })
+    result = score_all_pages(tmp_path, target_pages=["wiki/a.md"])
+    # a.md is zero-activity and was scored — should appear
+    assert "wiki/a.md" in result["zero_activity"]
+    # b.md is also zero-activity but was NOT scored — should NOT appear
+    assert "wiki/b.md" not in result["zero_activity"]

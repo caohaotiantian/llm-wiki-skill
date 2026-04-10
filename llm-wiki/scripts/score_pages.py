@@ -293,8 +293,8 @@ def _scan_links_in_file(file_path: str) -> list[str]:
                 code_fence_marker = ""
             continue
 
-        # Strip inline code spans (single and multi-backtick)
-        scannable = re.sub(r"(`+)(?:(?!\1).)+\1", "", line)
+        # Strip inline code spans (single and multi-backtick, including empty spans)
+        scannable = re.sub(r"(`+)(?:(?!\1).)*\1", "", line)
         for match in WIKILINK_RE.finditer(scannable):
             target = _extract_target(match.group(1))
             if target:
@@ -463,10 +463,16 @@ def score_all_pages(
     Args:
         vault_path: Path to the vault root.
         target_pages: If set, only write scores to these pages (relative paths).
-                      Normalization still uses all pages.
+                      Normalization still uses all pages. Note: pages outside
+                      target_pages that gain new incoming links are NOT re-scored —
+                      their on-disk computed_score may be stale until the next full
+                      recalc (during lint). Use full mode for vault-wide accuracy.
 
     Returns:
         {"scored": int, "top": [{"page": str, "computed_score": float}], "zero_activity": [str]}
+
+    Note: In incremental mode (target_pages set), zero_activity only covers the
+    scored pages, not the full vault. Use full mode for a complete zero-activity list.
     """
     vault_path = Path(vault_path)
 
