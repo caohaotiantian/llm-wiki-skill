@@ -46,7 +46,8 @@ DEFAULT_STATS = {
 def load_stats(vault_path: Path) -> dict:
     """Load .stats.json from vault root.
 
-    If the file doesn't exist, creates it with defaults and returns defaults.
+    If the file doesn't exist or is malformed, creates it with defaults.
+    Missing top-level keys are filled from defaults.
     """
     stats_path = Path(vault_path) / ".stats.json"
     if not stats_path.exists():
@@ -54,8 +55,23 @@ def load_stats(vault_path: Path) -> dict:
         save_stats(vault_path, stats)
         return stats
 
-    with open(stats_path, "r", encoding="utf-8") as f:
-        return json.load(f)
+    try:
+        with open(stats_path, "r", encoding="utf-8") as f:
+            stats = json.load(f)
+    except (json.JSONDecodeError, OSError) as e:
+        print(f"Warning: .stats.json is malformed ({e}), resetting to defaults.",
+              file=sys.stderr)
+        stats = copy.deepcopy(DEFAULT_STATS)
+        save_stats(vault_path, stats)
+        return stats
+
+    # Fill missing top-level keys from defaults
+    defaults = DEFAULT_STATS
+    for key in ("version", "weights", "tag_bonuses", "pages"):
+        if key not in stats:
+            stats[key] = copy.deepcopy(defaults[key])
+
+    return stats
 
 
 def save_stats(vault_path: Path, stats: dict) -> None:
@@ -120,7 +136,7 @@ def write_computed_score(content: str, score: float) -> str:
     If no frontmatter, return content unchanged.
     """
     content = content.replace("\r\n", "\n").replace("\r", "\n")
-    match = re.match(r"^(---\s*\n)(.*?)(\n---)", content, re.DOTALL)
+    match = re.match(r"^(---\s*\n)(.*?)(\n(?:---|\.\.\.))", content, re.DOTALL)
     if not match:
         return content
 
@@ -271,6 +287,9 @@ def _scan_links_in_file(file_path: str) -> list[str]:
 def count_incoming_links(vault_path: Path) -> dict[str, int]:
     """Count incoming wikilinks for each wiki page.
 
+    Uses the same resolution logic as lint_links.py (filename + alias + fuzzy matching)
+    to ensure cross-reference counts are consistent with link validation.
+
     Returns {relative_path: count} for all pages that have at least one incoming link.
     """
     vault_path = Path(vault_path)
@@ -278,20 +297,114 @@ def count_incoming_links(vault_path: Path) -> dict[str, int]:
     if not file_index:
         return {}
 
+    # Try to use lint_links.py's resolution index for alias-aware matching
+    resolution_index = _build_resolution_index(vault_path)
+
     counts: dict[str, int] = {}
 
     for stem, rel_path in file_index.items():
         abs_path = os.path.join(str(vault_path), rel_path)
         targets = _scan_links_in_file(abs_path)
         for target in targets:
-            norm = target.lower()
-            if norm in file_index:
-                target_path = file_index[norm]
-                # Skip self-links — a page linking to itself is not an incoming reference
-                if target_path != rel_path:
-                    counts[target_path] = counts.get(target_path, 0) + 1
+            target_path = _resolve_link_target(target, file_index, resolution_index)
+            if target_path and target_path != rel_path:
+                counts[target_path] = counts.get(target_path, 0) + 1
 
     return counts
+
+
+def _normalize_for_matching(name: str) -> str:
+    """Normalize a name for fuzzy matching (same as lint_links.py).
+
+    Case-insensitive, treats spaces/hyphens/underscores as equivalent.
+    """
+    return re.sub(r"[\s\-_]+", " ", name).strip().lower()
+
+
+def _build_resolution_index(vault_path: Path) -> dict:
+    """Build alias resolution index from wiki pages.
+
+    Returns {"by_alias": {normalized_alias: relative_path}} for alias-aware
+    link resolution. Mirrors lint_links.py's build_resolution_index but only
+    the alias portion (filenames are already in _collect_wiki_files).
+    """
+    by_alias: dict[str, str] = {}
+    wiki_dir = vault_path / "wiki"
+    if not wiki_dir.is_dir():
+        return {"by_alias": by_alias}
+
+    for root, dirs, files in os.walk(str(wiki_dir)):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for fname in files:
+            if not fname.endswith(".md") or fname.endswith(".snapshot.md"):
+                continue
+            full_path = os.path.join(root, fname)
+            rel_path = os.path.relpath(full_path, vault_path)
+            try:
+                with open(full_path, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+            except OSError:
+                continue
+            # Parse aliases from frontmatter
+            content_norm = content.replace("\r\n", "\n").replace("\r", "\n")
+            match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content_norm, re.DOTALL)
+            if not match:
+                continue
+            fm = match.group(1)
+            # Inline format: aliases: [a, b, c]
+            inline = re.search(r"^aliases:\s*\[([^\]]*)\]", fm, re.MULTILINE)
+            if inline:
+                for m in re.finditer(r'"([^"]*?)"|\'([^\']*?)\'|([^,\s][^,]*)', inline.group(1)):
+                    val = (m.group(1) or m.group(2) or m.group(3) or "").strip()
+                    if val:
+                        norm_alias = _normalize_for_matching(val)
+                        if norm_alias and norm_alias not in by_alias:
+                            by_alias[norm_alias] = rel_path
+            else:
+                # List format: aliases:\n  - a\n  - b
+                list_match = re.search(r"^aliases:\s*\n((?:\s+-\s+.+\n?)+)", fm, re.MULTILINE)
+                if list_match:
+                    items = re.findall(r"^\s+-\s+(.+)", list_match.group(1), re.MULTILINE)
+                    for item in items:
+                        val = item.strip().strip("\"'")
+                        if val:
+                            norm_alias = _normalize_for_matching(val)
+                            if norm_alias and norm_alias not in by_alias:
+                                by_alias[norm_alias] = rel_path
+
+    return {"by_alias": by_alias}
+
+
+def _resolve_link_target(
+    target: str,
+    file_index: dict[str, str],
+    resolution_index: dict,
+) -> str | None:
+    """Resolve a link target to a relative file path.
+
+    Resolution order (matching lint_links.py):
+    1. Exact filename match (case-insensitive)
+    2. Fuzzy filename match (hyphens/spaces/underscores equivalent)
+    3. Alias match (from frontmatter aliases)
+    Returns None if unresolved.
+    """
+    # 1. Exact filename (lowered)
+    norm = target.lower()
+    if norm in file_index:
+        return file_index[norm]
+
+    # 2. Fuzzy filename match
+    fuzzy = _normalize_for_matching(target)
+    for stem, rel_path in file_index.items():
+        if _normalize_for_matching(stem) == fuzzy:
+            return rel_path
+
+    # 3. Alias match
+    by_alias = resolution_index.get("by_alias", {})
+    if fuzzy in by_alias:
+        return by_alias[fuzzy]
+
+    return None
 
 
 def score_all_pages(
