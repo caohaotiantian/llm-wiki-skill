@@ -149,7 +149,7 @@ def normalize_values(raw: dict[str, int | float]) -> dict[str, float]:
     max_val = max(raw.values())
     if max_val == 0:
         return {k: 0.0 for k in raw}
-    return {k: round(v / max_val * 10, 2) for k, v in raw.items()}
+    return {k: v / max_val * 10 for k, v in raw.items()}
 
 
 def compute_score(
@@ -211,6 +211,11 @@ def _collect_wiki_files(vault_path: Path) -> dict[str, str]:
                 full = os.path.join(root, fname)
                 rel = os.path.relpath(full, vault_path)
                 stem = os.path.splitext(fname)[0].lower()
+                if stem in files and files[stem] != rel:
+                    print(f"Warning: duplicate filename '{fname}' — "
+                          f"{files[stem]} and {rel}. "
+                          f"Scoring may be incomplete for one of these.",
+                          file=sys.stderr)
                 files[stem] = rel
     return files
 
@@ -282,7 +287,9 @@ def count_incoming_links(vault_path: Path) -> dict[str, int]:
             norm = target.lower()
             if norm in file_index:
                 target_path = file_index[norm]
-                counts[target_path] = counts.get(target_path, 0) + 1
+                # Skip self-links — a page linking to itself is not an incoming reference
+                if target_path != rel_path:
+                    counts[target_path] = counts.get(target_path, 0) + 1
 
     return counts
 
