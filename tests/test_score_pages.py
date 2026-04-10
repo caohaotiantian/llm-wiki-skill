@@ -8,6 +8,7 @@ import os
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "llm-wiki", "scripts"))
 
 from score_pages import normalize_values, compute_score, parse_weight_and_tags, write_computed_score, count_incoming_links
+from score_pages import load_stats, save_stats, calculate_tag_bonus, DEFAULT_STATS
 
 
 def test_normalize_values_basic():
@@ -206,3 +207,55 @@ def test_count_incoming_links_empty_wiki(tmp_path):
     wiki.mkdir()
     counts = count_incoming_links(tmp_path)
     assert counts == {}
+
+
+def test_load_stats_missing_file(tmp_path):
+    """Missing .stats.json returns defaults and creates the file."""
+    stats = load_stats(tmp_path)
+    assert stats["version"] == 1
+    assert stats["weights"]["query_frequency"] == 0.4
+    assert stats["pages"] == {}
+    assert (tmp_path / ".stats.json").exists()
+
+
+def test_load_stats_existing(tmp_path):
+    """Reads existing .stats.json correctly."""
+    import json
+    data = {
+        "version": 1,
+        "weights": {"query_frequency": 0.5, "access_count": 0.3, "cross_ref_density": 0.2},
+        "tag_bonuses": {"pinned": 10, "priority/high": 6, "priority/medium": 3, "priority/low": 1},
+        "pages": {"wiki/a.md": {"query_count": 5, "access_count": 10}},
+    }
+    (tmp_path / ".stats.json").write_text(json.dumps(data))
+    stats = load_stats(tmp_path)
+    assert stats["weights"]["query_frequency"] == 0.5
+    assert stats["pages"]["wiki/a.md"]["query_count"] == 5
+
+
+def test_save_stats_roundtrip(tmp_path):
+    """Save then load preserves data."""
+    import json
+    stats = DEFAULT_STATS.copy()
+    stats["pages"] = {"wiki/x.md": {"query_count": 3, "access_count": 7}}
+    save_stats(tmp_path, stats)
+    loaded = json.loads((tmp_path / ".stats.json").read_text())
+    assert loaded["pages"]["wiki/x.md"]["query_count"] == 3
+
+
+def test_calculate_tag_bonus_pinned():
+    """Pinned tag gives highest bonus."""
+    bonuses = {"pinned": 10, "priority/high": 6, "priority/medium": 3, "priority/low": 1}
+    assert calculate_tag_bonus(["pinned"], bonuses) == 10
+
+
+def test_calculate_tag_bonus_multiple():
+    """Multiple tags stack."""
+    bonuses = {"pinned": 10, "priority/high": 6, "priority/medium": 3, "priority/low": 1}
+    assert calculate_tag_bonus(["pinned", "priority/high"], bonuses) == 16
+
+
+def test_calculate_tag_bonus_none():
+    """No priority tags gives zero bonus."""
+    bonuses = {"pinned": 10, "priority/high": 6, "priority/medium": 3, "priority/low": 1}
+    assert calculate_tag_bonus([], bonuses) == 0

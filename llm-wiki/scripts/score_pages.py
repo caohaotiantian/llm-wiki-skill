@@ -14,12 +14,59 @@ Usage:
 
 from __future__ import annotations
 
+import copy
+import json
 import os
 import re
 from pathlib import Path
 
 
 PRIORITY_TAGS = {"pinned", "priority/high", "priority/medium", "priority/low"}
+
+
+DEFAULT_STATS = {
+    "version": 1,
+    "weights": {
+        "query_frequency": 0.4,
+        "access_count": 0.3,
+        "cross_ref_density": 0.3,
+    },
+    "tag_bonuses": {
+        "pinned": 10,
+        "priority/high": 6,
+        "priority/medium": 3,
+        "priority/low": 1,
+    },
+    "pages": {},
+}
+
+
+def load_stats(vault_path: Path) -> dict:
+    """Load .stats.json from vault root.
+
+    If the file doesn't exist, creates it with defaults and returns defaults.
+    """
+    stats_path = Path(vault_path) / ".stats.json"
+    if not stats_path.exists():
+        stats = copy.deepcopy(DEFAULT_STATS)
+        save_stats(vault_path, stats)
+        return stats
+
+    with open(stats_path, "r", encoding="utf-8") as f:
+        return json.load(f)
+
+
+def save_stats(vault_path: Path, stats: dict) -> None:
+    """Write .stats.json to vault root."""
+    stats_path = Path(vault_path) / ".stats.json"
+    with open(stats_path, "w", encoding="utf-8") as f:
+        json.dump(stats, f, indent=2, ensure_ascii=False)
+        f.write("\n")
+
+
+def calculate_tag_bonus(priority_tags: list[str], tag_bonuses: dict[str, int | float]) -> float:
+    """Sum tag bonuses for the given priority tags."""
+    return sum(tag_bonuses.get(tag, 0) for tag in priority_tags)
 
 
 def parse_weight_and_tags(content: str) -> tuple[int | float, list[str]]:
