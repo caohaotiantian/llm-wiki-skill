@@ -272,3 +272,5 @@ Synthesized answer with citations to [[wiki pages]] and [[raw/sources]].
 | `source_path` | Source only | Relative path to original file in `raw/` |
 | `ingested` | Source only | Date the source was ingested |
 | `query` | Query only | The original question that prompted the analysis |
+| `weight` | No | Manual importance boost (number, default 0). Added directly to `computed_score`. Set by user to surface preferred pages. |
+| `computed_score` | No | Composite page score computed by `score_pages.py`. Do not edit manually — recalculated during ingest and lint. |

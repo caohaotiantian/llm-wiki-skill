@@ -54,7 +54,8 @@ Raw Sources → Wiki Pages → Index/Schema
 ├── wiki/                   # Synthesized knowledge pages (subdirectories emerge from content)
 ├── index.md                # Content catalog — organized by category
 ├── log.md                  # Append-only operation history
-└── schema.md               # Wiki conventions and page templates
+├── schema.md               # Wiki conventions and page templates
+└── .stats.json             # Page scoring counters and config
 ```
 
 The subdirectories under both `raw/` and `wiki/` are **not prescribed** — they should emerge from the content. The agent discovers files by scanning recursively, not by expecting a fixed directory structure. Common starting patterns include `concepts/`, `entities/`, `topics/`, `sources/`, `queries/` — but a domain might naturally call for `protocols/`, `people/`, `systems/`, or something else entirely. Let the content dictate the taxonomy. The templates in `schema.md` provide five page types as starting points; adapt or ignore them as needed.
@@ -142,6 +143,28 @@ The log uses a strict format so it can be reliably parsed by grep. Never deviate
   "version": 1
 }
 ```
+
+### Initial `.stats.json`
+
+```json
+{
+  "version": 1,
+  "weights": {
+    "query_frequency": 0.4,
+    "access_count": 0.3,
+    "cross_ref_density": 0.3
+  },
+  "tag_bonuses": {
+    "pinned": 10,
+    "priority/high": 6,
+    "priority/medium": 3,
+    "priority/low": 1
+  },
+  "pages": {}
+}
+```
+
+This file tracks page access counters and scoring configuration. The `weights` control how much each computed indicator contributes to the final score. The `tag_bonuses` define fixed score additions for priority tags. Both are user-tunable. See **Page Scoring** below for details.
 
 A populated manifest entry looks like this — follow this schema exactly so cross-session consistency is maintained:
 
@@ -291,6 +314,20 @@ Process the results:
 
 This step catches two common issues: links that use an alias instead of the canonical filename (which Obsidian cannot resolve), and forward-references to pages that were mentioned but never created. Note: `--fix` with `--files` only repairs links in the specified files. For a complete vault-wide fix, run without `--files` or follow up with a vault-wide lint.
 
+### Step 5.6: Update page scores
+
+After validation passes:
+
+1. **Update counters** — increment `access_count` in `.stats.json` for every existing wiki page that was read during cross-linking in Steps 3–4. Use a single read-modify-write cycle to avoid partial updates.
+
+2. **Score affected pages** — run the scoring script on all pages created and updated in this ingest:
+
+```bash
+python <skill-dir>/scripts/score_pages.py <vault-path> --pages <page1.md> <page2.md> ... --json
+```
+
+This computes scores using the latest counters and cross-reference data. New pages start with a low computed score (since they have no access history), which will increase as they get queried and referenced.
+
 ### Batch ingestion
 
 When ingesting multiple sources at once, process them in a single pass to maximize cross-referencing. Read all sources first, then compile pages that synthesize across sources rather than creating isolated summaries.
@@ -388,9 +425,13 @@ The scan detects:
 When the user asks a question about the wiki's knowledge:
 
 1. **Search**: Read `index.md` to identify relevant pages. For larger wikis, use grep/glob to find pages mentioning key terms.
-2. **Retrieve**: Read the relevant wiki pages.
-3. **Synthesize**: Answer the question using the wiki's compiled knowledge. Cite sources with `[[wikilinks]]`.
-4. **File the answer**: Save the answer as a wiki page under `wiki/queries/` if it synthesizes across 3+ wiki pages or reveals a non-obvious connection. Don't file simple single-page lookups. This is how the wiki compounds — queries produce new artifacts that future queries can build on. Ask the user if borderline.
+2. **Rank by score**: Sort candidate pages by `computed_score` descending (from frontmatter). Prioritize reading high-scored pages first — they represent the most valued content in the wiki.
+3. **Retrieve**: Read the relevant wiki pages, starting with the highest-scored candidates.
+4. **Synthesize**: Answer the question using the wiki's compiled knowledge. When multiple pages cover the same topic, give more weight to higher-scored pages. Cite sources with `[[wikilinks]]` — list higher-scored sources first.
+5. **Update counters**: After the query completes:
+   - Increment `access_count` in `.stats.json` for every wiki page **read** during this query.
+   - Increment `query_count` in `.stats.json` for every wiki page **cited in the answer**.
+6. **File the answer**: Save the answer as a wiki page under `wiki/queries/` if it synthesizes across 3+ wiki pages or reveals a non-obvious connection. Don't file simple single-page lookups. This is how the wiki compounds — queries produce new artifacts that future queries can build on. Ask the user if borderline.
 
 ### Query output format
 
@@ -424,6 +465,7 @@ Linting ensures wiki health. Run it periodically or when the user asks.
 | **Empty sections** | Pages with placeholder sections that were never filled | Flag or remove |
 | **Frontmatter issues** | Missing required fields, outdated timestamps | Fix automatically |
 | **Schema drift** | Pages using outdated frontmatter schema (missing new fields, deprecated tags) | Migrate to current schema |
+| **Score staleness** | Pages missing `computed_score` or scores not recalculated since last full lint | Yes — run full `score_pages.py` |
 
 #### Dead link resolution (two-phase)
 
@@ -434,6 +476,18 @@ Run `python <skill-dir>/scripts/lint_links.py <vault-path> --json` to get a stru
 **Phase 2 — Stub creation:** The link matches no filename and no alias. Create a stub page (`status: stub`) using the template from Ingest Step 4.
 
 Always run Phase 1 before Phase 2 — some apparent "missing pages" are actually alias mismatches that resolve to existing pages.
+
+#### Score recalculation
+
+Run a full scoring recalc as part of every lint:
+
+```bash
+python <skill-dir>/scripts/score_pages.py <vault-path> --json
+```
+
+Include the scoring summary in the lint report:
+- Top 10 pages by score
+- Pages with zero activity (no queries, no access, no incoming links, no manual weight)
 
 ### Lint output
 
@@ -452,6 +506,10 @@ Save a report to `wiki/lint-YYYY-MM-DD.md`:
 ## Needs Attention
 - [[concept-a]] and [[concept-b]] appear to cover the same topic — consider merging
 - [[entity-x]] has no incoming links and unclear relevance
+
+## Scoring Summary
+- Top: [[highest-scored-page]] (score: 9.2), [[second-page]] (score: 8.1), ...
+- X pages with zero activity — consider reviewing or archiving
 ```
 
 Also append to `log.md`.
@@ -608,6 +666,61 @@ Key points:
 
 ---
 
+## Page Scoring
+
+The wiki uses a composite scoring system to surface high-value content. Each page gets a `computed_score` in its frontmatter, computed from five indicators:
+
+### Indicators
+
+| Indicator | Type | Source | Effect |
+|-----------|------|--------|--------|
+| Query frequency | Computed | `.stats.json` `query_count` | Pages cited in query answers score higher |
+| Access count | Computed | `.stats.json` `access_count` | Pages read more often score higher |
+| Cross-reference density | Computed | Incoming `[[wikilinks]]` scanned live | Well-connected pages score higher |
+| Manual weight | Manual | `weight` frontmatter field (default: 0) | User-set additive boost |
+| Priority tags | Manual | `#pinned`, `#priority/high\|medium\|low` | Fixed bonus: pinned=+10, high=+6, medium=+3, low=+1 |
+
+### Formula
+
+```
+computed_score = (w1 * norm(query_frequency))
+              + (w2 * norm(access_count))
+              + (w3 * norm(cross_ref_density))
+              + weight
+              + tag_bonus
+```
+
+`norm()` normalizes to 0–10 relative to the max across all pages. Default weights: `w1=0.4`, `w2=0.3`, `w3=0.3` — configurable in `.stats.json`.
+
+### When scores are computed
+
+- **After ingest** (Step 5.6): Incremental — only pages created/updated in this ingest
+- **During lint**: Full recalc of all pages
+- **Manual**: Run `python <skill-dir>/scripts/score_pages.py <vault-path>` for a full recalc at any time
+
+### Counter tracking
+
+The agent updates `.stats.json` counters during operations:
+- **Query**: `access_count` for every page read; `query_count` for every page cited in the answer
+- **Ingest**: `access_count` for every existing page read during cross-linking
+
+### User controls
+
+Users can adjust scoring behavior in two ways:
+
+1. **Per-page**: Set `weight: N` in frontmatter (additive boost) or add `#pinned` / `#priority/high|medium|low` tags
+2. **Global**: Edit `.stats.json` to change `weights` (indicator multipliers) or `tag_bonuses` (per-tag values)
+
+### Index ordering
+
+`index.md` entries are sorted by `computed_score` descending within each category, with the score shown inline:
+
+```markdown
+- [[page-name]] (score: 9.2) — one-line summary
+```
+
+---
+
 ## Bundled Resources
 
 - `references/schema.md` — Default page templates and frontmatter conventions
@@ -615,4 +728,5 @@ Key points:
 - `scripts/extract.py` — Document extraction using Docling (optional dependency). Output goes to `raw/extracted/` by default.
 - `scripts/scan.py` — Scans `raw/` for new, failed, or low-quality extractions. Supports periodic scanning and auto-extraction.
 - `scripts/diff_sources.py` — Structured diff between source versions for incremental re-ingestion
+- `scripts/score_pages.py` — Computes composite page scores from query frequency, access count, cross-reference density, manual weight, and priority tags. Writes `computed_score` to page frontmatter. Supports `--pages` for incremental scoring and `--json` for structured output.
 - `scripts/lint_links.py` — Wikilink validator: scans for alias mismatches (`[[alias]]` that should be `[[filename|alias]]`) and missing link targets. Supports vault-wide lint and targeted post-ingest validation. Use `--fix` to auto-repair alias mismatches, `--json` for structured output.
