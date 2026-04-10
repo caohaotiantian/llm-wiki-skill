@@ -397,3 +397,51 @@ def test_cli_pages_flag(tmp_path):
     )
     assert result.returncode == 0
     assert "Scored 1 page" in result.stdout
+
+
+def test_full_workflow_simulation(tmp_path):
+    """Simulate: setup -> ingest (counters update) -> score -> query (counters update) -> re-score."""
+    # Setup: create vault with pages and empty stats
+    _make_vault(tmp_path, {
+        "concepts/microservices.md": (
+            "---\naliases: []\ntags: [concept, pinned]\nweight: 2\n"
+            "status: active\n---\n# Microservices\nSee [[api-gateway]].\n"
+        ),
+        "concepts/api-gateway.md": (
+            "---\naliases: []\ntags: [concept, priority/high]\n"
+            "status: active\n---\n# API Gateway\nUsed by [[microservices]].\n"
+        ),
+        "concepts/monolith.md": (
+            "---\naliases: []\ntags: [concept]\n"
+            "status: active\n---\n# Monolith\nContrast with [[microservices]].\n"
+        ),
+    })
+
+    # Step 1: Initial score with no activity
+    result1 = score_all_pages(tmp_path)
+    assert result1["scored"] == 3
+    scores1 = {e["page"]: e["computed_score"] for e in result1["top"]}
+    # microservices has pinned(+10) + weight(2) + cross-ref links
+    # api-gateway has priority/high(+6) + cross-ref links
+    # monolith has only cross-ref (zero)
+    assert scores1["wiki/concepts/microservices.md"] > scores1["wiki/concepts/api-gateway.md"]
+    assert scores1["wiki/concepts/api-gateway.md"] > scores1["wiki/concepts/monolith.md"]
+
+    # Step 2: Simulate query activity — monolith gets queried a lot
+    stats = load_stats(tmp_path)
+    stats["pages"]["wiki/concepts/monolith.md"] = {"query_count": 50, "access_count": 100}
+    stats["pages"]["wiki/concepts/microservices.md"] = {"query_count": 5, "access_count": 10}
+    stats["pages"]["wiki/concepts/api-gateway.md"] = {"query_count": 2, "access_count": 5}
+    save_stats(tmp_path, stats)
+
+    # Step 3: Re-score — monolith should rise due to high query/access counts
+    result2 = score_all_pages(tmp_path)
+    scores2 = {e["page"]: e["computed_score"] for e in result2["top"]}
+    # monolith now has max query_freq (10.0) and max access_count (10.0)
+    # but microservices still has pinned + weight + cross-ref advantage
+    assert scores2["wiki/concepts/monolith.md"] > scores1["wiki/concepts/monolith.md"]
+
+    # Verify frontmatter was written for all pages
+    for page_dir in ["microservices.md", "api-gateway.md", "monolith.md"]:
+        content = (tmp_path / "wiki" / "concepts" / page_dir).read_text()
+        assert "computed_score:" in content
