@@ -445,3 +445,74 @@ def test_full_workflow_simulation(tmp_path):
     for page_dir in ["microservices.md", "api-gateway.md", "monolith.md"]:
         content = (tmp_path / "wiki" / "concepts" / page_dir).read_text()
         assert "computed_score:" in content
+
+
+def test_count_incoming_links_alias_resolution(tmp_path):
+    """Links via frontmatter alias resolve to the aliased page."""
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    (wiki / "artificial-intelligence.md").write_text(
+        "---\naliases: [AI]\ntags: [concept]\n---\n# Artificial Intelligence\n"
+    )
+    (wiki / "overview.md").write_text(
+        "---\ntags: [topic]\n---\n# Overview\nSee [[AI]] for details.\n"
+    )
+
+    counts = count_incoming_links(tmp_path)
+    assert counts.get("wiki/artificial-intelligence.md", 0) == 1
+
+
+def test_count_incoming_links_path_qualified(tmp_path):
+    """Path-qualified links like [[wiki/concepts/page]] resolve correctly."""
+    concepts = tmp_path / "wiki" / "concepts"
+    concepts.mkdir(parents=True)
+    topics = tmp_path / "wiki" / "topics"
+    topics.mkdir(parents=True)
+    (concepts / "api-gateway.md").write_text(
+        "---\ntags: [concept]\n---\n# API Gateway\n"
+    )
+    (topics / "overview.md").write_text(
+        "---\ntags: [topic]\n---\n# Overview\nSee [[wiki/concepts/api-gateway]].\n"
+    )
+
+    counts = count_incoming_links(tmp_path)
+    assert counts.get("wiki/concepts/api-gateway.md", 0) == 1
+
+
+def test_count_incoming_links_multi_backtick_code(tmp_path):
+    """Links inside multi-backtick inline code are not counted."""
+    wiki = tmp_path / "wiki"
+    wiki.mkdir()
+    (wiki / "a.md").write_text(
+        "---\ntags: [concept]\n---\n# A\n``[[b]]`` and [[c]].\n"
+    )
+    (wiki / "b.md").write_text("---\ntags: [concept]\n---\n# B\n")
+    (wiki / "c.md").write_text("---\ntags: [concept]\n---\n# C\n")
+
+    counts = count_incoming_links(tmp_path)
+    assert counts.get("wiki/b.md", 0) == 0
+    assert counts.get("wiki/c.md", 0) == 1
+
+
+def test_write_computed_score_dots_delimiter():
+    """Handles ... as frontmatter closing delimiter."""
+    content = "---\ntags: [concept]\n...\n# Page\n\nBody.\n"
+    result = write_computed_score(content, 4.2)
+    assert "computed_score: 4.2" in result
+    assert "# Page" in result
+
+
+def test_load_stats_malformed_json(tmp_path):
+    """Malformed .stats.json resets to defaults."""
+    (tmp_path / ".stats.json").write_text("{bad json")
+    stats = load_stats(tmp_path)
+    assert stats["version"] == 1
+    assert stats["weights"]["query_frequency"] == 0.4
+
+
+def test_load_stats_missing_keys(tmp_path):
+    """Missing top-level keys filled from defaults."""
+    (tmp_path / ".stats.json").write_text(json.dumps({"version": 1, "pages": {}}))
+    stats = load_stats(tmp_path)
+    assert "weights" in stats
+    assert "tag_bonuses" in stats

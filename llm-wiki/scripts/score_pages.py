@@ -20,6 +20,7 @@ import json
 import os
 import re
 import sys
+import tempfile
 from pathlib import Path
 
 
@@ -75,11 +76,20 @@ def load_stats(vault_path: Path) -> dict:
 
 
 def save_stats(vault_path: Path, stats: dict) -> None:
-    """Write .stats.json to vault root."""
+    """Write .stats.json to vault root atomically (temp file + rename)."""
     stats_path = Path(vault_path) / ".stats.json"
-    with open(stats_path, "w", encoding="utf-8") as f:
-        json.dump(stats, f, indent=2, ensure_ascii=False)
-        f.write("\n")
+    fd, tmp_path = tempfile.mkstemp(dir=str(vault_path), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            json.dump(stats, f, indent=2, ensure_ascii=False)
+            f.write("\n")
+        os.replace(tmp_path, str(stats_path))
+    except BaseException:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+        raise
 
 
 def calculate_tag_bonus(priority_tags: list[str], tag_bonuses: dict[str, int | float]) -> float:
@@ -136,14 +146,17 @@ def write_computed_score(content: str, score: float) -> str:
     If no frontmatter, return content unchanged.
     """
     content = content.replace("\r\n", "\n").replace("\r", "\n")
-    match = re.match(r"^(---\s*\n)(.*?)(\n(?:---|\.\.\.))", content, re.DOTALL)
+    match = re.match(r"^(---\s*\n)(.*?\n)((?:---|\.\.\.))", content, re.DOTALL)
     if not match:
         return content
 
-    prefix = match.group(1)
-    fm = match.group(2)
-    suffix = match.group(3)
+    prefix = match.group(1)    # "---\n"
+    fm = match.group(2)        # frontmatter body including trailing \n
+    suffix = match.group(3)    # closing "---" or "..."
     rest = content[match.end():]
+
+    # Strip trailing newline from fm for clean manipulation, re-add later
+    fm = fm.rstrip("\n")
 
     # Update existing or insert new
     if re.search(r"^computed_score:\s*", fm, re.MULTILINE):
@@ -151,7 +164,7 @@ def write_computed_score(content: str, score: float) -> str:
     else:
         fm = fm + f"\ncomputed_score: {score}"
 
-    return prefix + fm + suffix + rest
+    return prefix + fm + "\n" + suffix + rest
 
 
 def normalize_values(raw: dict[str, int | float]) -> dict[str, float]:
@@ -213,7 +226,9 @@ def _extract_target(wikilink_content: str) -> str:
 def _collect_wiki_files(vault_path: Path) -> dict[str, str]:
     """Collect all .md files under wiki/.
 
-    Returns {normalized_stem: relative_path} for resolving link targets.
+    Returns {normalized_key: relative_path} for resolving link targets.
+    Keys include both bare stems and vault-relative paths (without .md),
+    matching lint_links.py's resolution behavior.
     """
     wiki_dir = vault_path / "wiki"
     if not wiki_dir.is_dir():
@@ -233,6 +248,10 @@ def _collect_wiki_files(vault_path: Path) -> dict[str, str]:
                           f"Scoring may be incomplete for one of these.",
                           file=sys.stderr)
                 files[stem] = rel
+                # Also register path-qualified key (e.g. "wiki/concepts/microservices")
+                rel_no_ext = os.path.splitext(rel)[0].lower()
+                if rel_no_ext != stem:
+                    files[rel_no_ext] = rel
     return files
 
 
@@ -274,8 +293,8 @@ def _scan_links_in_file(file_path: str) -> list[str]:
                 code_fence_marker = ""
             continue
 
-        # Strip inline code spans
-        scannable = re.sub(r"`[^`]+`", "", line)
+        # Strip inline code spans (single and multi-backtick)
+        scannable = re.sub(r"(`+)(?:(?!\1).)+\1", "", line)
         for match in WIKILINK_RE.finditer(scannable):
             target = _extract_target(match.group(1))
             if target:
@@ -284,25 +303,41 @@ def _scan_links_in_file(file_path: str) -> list[str]:
     return targets
 
 
-def count_incoming_links(vault_path: Path) -> dict[str, int]:
+def count_incoming_links(
+    vault_path: Path,
+    file_index: dict[str, str] | None = None,
+    resolution_index: dict | None = None,
+) -> dict[str, int]:
     """Count incoming wikilinks for each wiki page.
 
     Uses the same resolution logic as lint_links.py (filename + alias + fuzzy matching)
     to ensure cross-reference counts are consistent with link validation.
 
+    Args:
+        vault_path: Path to the vault root.
+        file_index: Pre-built file index from _collect_wiki_files (avoids redundant scan).
+        resolution_index: Pre-built alias index from _build_resolution_index (avoids redundant scan).
+
     Returns {relative_path: count} for all pages that have at least one incoming link.
     """
     vault_path = Path(vault_path)
-    file_index = _collect_wiki_files(vault_path)
+    if file_index is None:
+        file_index = _collect_wiki_files(vault_path)
     if not file_index:
         return {}
 
-    # Try to use lint_links.py's resolution index for alias-aware matching
-    resolution_index = _build_resolution_index(vault_path)
+    if resolution_index is None:
+        resolution_index = _build_resolution_index(vault_path)
 
     counts: dict[str, int] = {}
 
+    # Deduplicate: file_index may have multiple keys for the same file
+    # (bare stem + path-qualified). Iterate unique files only.
+    seen_files: set[str] = set()
     for stem, rel_path in file_index.items():
+        if rel_path in seen_files:
+            continue
+        seen_files.add(rel_path)
         abs_path = os.path.join(str(vault_path), rel_path)
         targets = _scan_links_in_file(abs_path)
         for target in targets:
@@ -358,8 +393,14 @@ def _build_resolution_index(vault_path: Path) -> dict:
                     val = (m.group(1) or m.group(2) or m.group(3) or "").strip()
                     if val:
                         norm_alias = _normalize_for_matching(val)
-                        if norm_alias and norm_alias not in by_alias:
-                            by_alias[norm_alias] = rel_path
+                        if norm_alias:
+                            if norm_alias in by_alias and by_alias[norm_alias] != rel_path:
+                                print(f"Warning: duplicate alias '{val}' — "
+                                      f"{by_alias[norm_alias]} and {rel_path}. "
+                                      f"First registration wins.",
+                                      file=sys.stderr)
+                            elif norm_alias not in by_alias:
+                                by_alias[norm_alias] = rel_path
             else:
                 # List format: aliases:\n  - a\n  - b
                 list_match = re.search(r"^aliases:\s*\n((?:\s+-\s+.+\n?)+)", fm, re.MULTILINE)
@@ -369,8 +410,14 @@ def _build_resolution_index(vault_path: Path) -> dict:
                         val = item.strip().strip("\"'")
                         if val:
                             norm_alias = _normalize_for_matching(val)
-                            if norm_alias and norm_alias not in by_alias:
-                                by_alias[norm_alias] = rel_path
+                            if norm_alias:
+                                if norm_alias in by_alias and by_alias[norm_alias] != rel_path:
+                                    print(f"Warning: duplicate alias '{val}' — "
+                                          f"{by_alias[norm_alias]} and {rel_path}. "
+                                          f"First registration wins.",
+                                          file=sys.stderr)
+                                elif norm_alias not in by_alias:
+                                    by_alias[norm_alias] = rel_path
 
     return {"by_alias": by_alias}
 
@@ -429,12 +476,15 @@ def score_all_pages(
     tag_bonuses = stats["tag_bonuses"]
     page_stats = stats["pages"]
 
-    # Collect all wiki pages
+    # Collect all wiki pages and build resolution index (single traversal each)
     file_index = _collect_wiki_files(vault_path)
     if not file_index:
         return {"scored": 0, "top": [], "zero_activity": []}
 
-    all_pages = list(file_index.values())
+    resolution_index = _build_resolution_index(vault_path)
+
+    # Deduplicate: file_index has both stem and path keys pointing to same rel_path
+    all_pages = sorted(set(file_index.values()))
 
     # Build raw indicator maps for all pages
     raw_query_freq = {}
@@ -444,8 +494,8 @@ def score_all_pages(
         raw_query_freq[rel_path] = ps.get("query_count", 0)
         raw_access_count[rel_path] = ps.get("access_count", 0)
 
-    # Count incoming links
-    raw_cross_ref = count_incoming_links(vault_path)
+    # Count incoming links (reuse file_index and resolution_index)
+    raw_cross_ref = count_incoming_links(vault_path, file_index, resolution_index)
     for rel_path in all_pages:
         if rel_path not in raw_cross_ref:
             raw_cross_ref[rel_path] = 0
