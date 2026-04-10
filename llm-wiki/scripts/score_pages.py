@@ -283,3 +283,101 @@ def count_incoming_links(vault_path: Path) -> dict[str, int]:
                 counts[target_path] = counts.get(target_path, 0) + 1
 
     return counts
+
+
+def score_all_pages(
+    vault_path,
+    target_pages=None,
+):
+    """Run the full scoring pipeline.
+
+    Args:
+        vault_path: Path to the vault root.
+        target_pages: If set, only write scores to these pages (relative paths).
+                      Normalization still uses all pages.
+
+    Returns:
+        {"scored": int, "top": [{"page": str, "computed_score": float}], "zero_activity": [str]}
+    """
+    vault_path = Path(vault_path)
+
+    # Load stats (creates defaults if missing)
+    stats = load_stats(vault_path)
+    weights = stats["weights"]
+    tag_bonuses = stats["tag_bonuses"]
+    page_stats = stats["pages"]
+
+    # Collect all wiki pages
+    file_index = _collect_wiki_files(vault_path)
+    if not file_index:
+        return {"scored": 0, "top": [], "zero_activity": []}
+
+    all_pages = list(file_index.values())
+
+    # Build raw indicator maps for all pages
+    raw_query_freq = {}
+    raw_access_count = {}
+    for rel_path in all_pages:
+        ps = page_stats.get(rel_path, {})
+        raw_query_freq[rel_path] = ps.get("query_count", 0)
+        raw_access_count[rel_path] = ps.get("access_count", 0)
+
+    # Count incoming links
+    raw_cross_ref = count_incoming_links(vault_path)
+    for rel_path in all_pages:
+        if rel_path not in raw_cross_ref:
+            raw_cross_ref[rel_path] = 0
+
+    # Normalize
+    norm_qf = normalize_values(raw_query_freq)
+    norm_ac = normalize_values(raw_access_count)
+    norm_cr = normalize_values(raw_cross_ref)
+
+    # Determine which pages to write
+    pages_to_write = target_pages if target_pages else all_pages
+
+    # Compute and write scores
+    results = []
+    zero_activity = []
+
+    for rel_path in pages_to_write:
+        abs_path = vault_path / rel_path
+        if not abs_path.exists():
+            continue
+
+        content = abs_path.read_text(encoding="utf-8", errors="replace")
+        manual_weight, priority_tags = parse_weight_and_tags(content)
+        tag_bonus = calculate_tag_bonus(priority_tags, tag_bonuses)
+
+        score = compute_score(
+            norm_query_freq=norm_qf.get(rel_path, 0.0),
+            norm_access_count=norm_ac.get(rel_path, 0.0),
+            norm_cross_ref=norm_cr.get(rel_path, 0.0),
+            manual_weight=manual_weight,
+            tag_bonus=tag_bonus,
+            weights=weights,
+        )
+
+        # Track zero-activity pages
+        if (raw_query_freq.get(rel_path, 0) == 0
+                and raw_access_count.get(rel_path, 0) == 0
+                and raw_cross_ref.get(rel_path, 0) == 0
+                and manual_weight == 0
+                and tag_bonus == 0):
+            zero_activity.append(rel_path)
+
+        # Write to frontmatter
+        updated = write_computed_score(content, score)
+        abs_path.write_text(updated, encoding="utf-8")
+
+        results.append({"page": rel_path, "computed_score": score})
+
+    # Sort by score descending, take top 10
+    results.sort(key=lambda x: x["computed_score"], reverse=True)
+    top = results[:10]
+
+    return {
+        "scored": len(results),
+        "top": top,
+        "zero_activity": sorted(zero_activity),
+    }

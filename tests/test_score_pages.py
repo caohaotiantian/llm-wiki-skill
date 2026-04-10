@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Tests for score_pages.py scoring logic."""
 
+import json
 import sys
 import os
 
@@ -9,6 +10,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "llm-wiki", "sc
 
 from score_pages import normalize_values, compute_score, parse_weight_and_tags, write_computed_score, count_incoming_links
 from score_pages import load_stats, save_stats, calculate_tag_bonus, DEFAULT_STATS
+from score_pages import score_all_pages
 
 
 def test_normalize_values_basic():
@@ -259,3 +261,89 @@ def test_calculate_tag_bonus_none():
     """No priority tags gives zero bonus."""
     bonuses = {"pinned": 10, "priority/high": 6, "priority/medium": 3, "priority/low": 1}
     assert calculate_tag_bonus([], bonuses) == 0
+
+
+def _make_vault(tmp_path, pages_content, stats=None):
+    """Helper: create a vault with wiki pages and optional .stats.json."""
+    wiki = tmp_path / "wiki"
+    wiki.mkdir(parents=True, exist_ok=True)
+    for rel_name, content in pages_content.items():
+        page_path = wiki / rel_name
+        page_path.parent.mkdir(parents=True, exist_ok=True)
+        page_path.write_text(content)
+    if stats:
+        (tmp_path / ".stats.json").write_text(json.dumps(stats))
+
+
+def test_score_all_pages_basic(tmp_path):
+    """Full scoring pipeline: computes and writes computed_score."""
+    _make_vault(tmp_path, {
+        "a.md": "---\ntags: [concept]\n---\n# A\nSee [[b]].\n",
+        "b.md": "---\ntags: [concept, pinned]\n---\n# B\nSee [[a]].\n",
+    }, {
+        "version": 1,
+        "weights": {"query_frequency": 0.4, "access_count": 0.3, "cross_ref_density": 0.3},
+        "tag_bonuses": {"pinned": 10, "priority/high": 6, "priority/medium": 3, "priority/low": 1},
+        "pages": {
+            "wiki/a.md": {"query_count": 10, "access_count": 20},
+            "wiki/b.md": {"query_count": 5, "access_count": 10},
+        },
+    })
+
+    result = score_all_pages(tmp_path)
+
+    assert result["scored"] == 2
+    scores = {entry["page"]: entry["computed_score"] for entry in result["top"]}
+    assert scores["wiki/b.md"] > scores["wiki/a.md"]
+    b_content = (tmp_path / "wiki" / "b.md").read_text()
+    assert "computed_score:" in b_content
+
+
+def test_score_all_pages_incremental(tmp_path):
+    """--pages mode only writes to specified pages."""
+    _make_vault(tmp_path, {
+        "a.md": "---\ntags: [concept]\n---\n# A\nSee [[b]].\n",
+        "b.md": "---\ntags: [concept]\n---\n# B\n",
+    }, {
+        "version": 1,
+        "weights": {"query_frequency": 0.4, "access_count": 0.3, "cross_ref_density": 0.3},
+        "tag_bonuses": {"pinned": 10, "priority/high": 6, "priority/medium": 3, "priority/low": 1},
+        "pages": {},
+    })
+
+    result = score_all_pages(tmp_path, target_pages=["wiki/a.md"])
+
+    assert result["scored"] == 1
+    a_content = (tmp_path / "wiki" / "a.md").read_text()
+    assert "computed_score:" in a_content
+    b_content = (tmp_path / "wiki" / "b.md").read_text()
+    assert "computed_score:" not in b_content
+
+
+def test_score_all_pages_no_stats(tmp_path):
+    """Creates .stats.json if missing, scores all pages with zero counters."""
+    _make_vault(tmp_path, {
+        "a.md": "---\ntags: [concept]\nweight: 5\n---\n# A\n",
+    })
+
+    result = score_all_pages(tmp_path)
+
+    assert result["scored"] == 1
+    assert result["top"][0]["computed_score"] == 5.0
+    assert (tmp_path / ".stats.json").exists()
+
+
+def test_score_all_pages_zero_activity(tmp_path):
+    """Pages with no counters, no links, no weight appear in zero_activity."""
+    _make_vault(tmp_path, {
+        "a.md": "---\ntags: [concept]\n---\n# A\n",
+    }, {
+        "version": 1,
+        "weights": {"query_frequency": 0.4, "access_count": 0.3, "cross_ref_density": 0.3},
+        "tag_bonuses": {"pinned": 10, "priority/high": 6, "priority/medium": 3, "priority/low": 1},
+        "pages": {},
+    })
+
+    result = score_all_pages(tmp_path)
+
+    assert "wiki/a.md" in result["zero_activity"]
