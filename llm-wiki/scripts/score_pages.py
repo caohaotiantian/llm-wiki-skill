@@ -14,6 +14,78 @@ Usage:
 
 from __future__ import annotations
 
+import re
+
+
+PRIORITY_TAGS = {"pinned", "priority/high", "priority/medium", "priority/low"}
+
+
+def parse_weight_and_tags(content: str) -> tuple[int | float, list[str]]:
+    """Extract manual weight and priority tags from page frontmatter.
+
+    Returns (weight, priority_tags) where priority_tags is a list of
+    matching tag strings from PRIORITY_TAGS.
+    """
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content, re.DOTALL)
+    if not match:
+        return 0, []
+
+    fm = match.group(1)
+
+    # Parse weight
+    weight: int | float = 0
+    weight_match = re.search(r"^weight:\s*(.+)$", fm, re.MULTILINE)
+    if weight_match:
+        try:
+            val = weight_match.group(1).strip()
+            weight = float(val) if "." in val else int(val)
+        except ValueError:
+            pass
+
+    # Parse tags — inline format: tags: [a, b, c]
+    priority_tags: list[str] = []
+    inline = re.search(r"^tags:\s*\[([^\]]*)\]", fm, re.MULTILINE)
+    if inline:
+        raw_tags = [t.strip().strip("\"'") for t in inline.group(1).split(",")]
+        priority_tags = [t for t in raw_tags if t in PRIORITY_TAGS]
+    else:
+        # List format: tags:\n  - a\n  - b
+        list_match = re.search(r"^tags:\s*\n((?:\s+-\s+.+\n?)+)", fm, re.MULTILINE)
+        if list_match:
+            items = re.findall(r"^\s+-\s+(.+)", list_match.group(1), re.MULTILINE)
+            priority_tags = [
+                t.strip().strip("\"'") for t in items if t.strip().strip("\"'") in PRIORITY_TAGS
+            ]
+
+    return weight, priority_tags
+
+
+def write_computed_score(content: str, score: float) -> str:
+    """Write or update computed_score in page frontmatter.
+
+    If frontmatter exists and has computed_score, update it.
+    If frontmatter exists without computed_score, insert before closing ---.
+    If no frontmatter, return content unchanged.
+    """
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    match = re.match(r"^(---\s*\n)(.*?)(\n---)", content, re.DOTALL)
+    if not match:
+        return content
+
+    prefix = match.group(1)
+    fm = match.group(2)
+    suffix = match.group(3)
+    rest = content[match.end():]
+
+    # Update existing or insert new
+    if re.search(r"^computed_score:\s*", fm, re.MULTILINE):
+        fm = re.sub(r"^computed_score:\s*.*$", f"computed_score: {score}", fm, flags=re.MULTILINE)
+    else:
+        fm = fm + f"\ncomputed_score: {score}"
+
+    return prefix + fm + suffix + rest
+
 
 def normalize_values(raw: dict[str, int | float]) -> dict[str, float]:
     """Normalize values to 0-10 scale relative to max.

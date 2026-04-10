@@ -7,7 +7,7 @@ import os
 # Add scripts dir to path so we can import score_pages
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "llm-wiki", "scripts"))
 
-from score_pages import normalize_values, compute_score
+from score_pages import normalize_values, compute_score, parse_weight_and_tags, write_computed_score
 
 
 def test_normalize_values_basic():
@@ -87,3 +87,65 @@ def test_compute_score_rounds_to_one_decimal():
     )
     # 0.4*3.33 + 0.3*3.33 + 0.3*3.33 = 1.332 + 0.999 + 0.999 = 3.33
     assert score == 3.3
+
+
+def test_parse_weight_and_tags_defaults():
+    """No weight or priority tags returns defaults."""
+    content = "---\naliases: []\ntags: [concept]\nstatus: active\n---\n# Page\n"
+    weight, tags = parse_weight_and_tags(content)
+    assert weight == 0
+    assert tags == []
+
+
+def test_parse_weight_and_tags_with_weight():
+    """Reads numeric weight from frontmatter."""
+    content = "---\nweight: 5\ntags: [concept]\n---\n# Page\n"
+    weight, tags = parse_weight_and_tags(content)
+    assert weight == 5
+    assert tags == []
+
+
+def test_parse_weight_and_tags_with_priority_tags():
+    """Extracts priority tags from tag list."""
+    content = "---\ntags: [concept, pinned, priority/high]\n---\n# Page\n"
+    weight, tags = parse_weight_and_tags(content)
+    assert weight == 0
+    assert set(tags) == {"pinned", "priority/high"}
+
+
+def test_parse_weight_and_tags_list_format():
+    """Handles YAML list format for tags."""
+    content = "---\ntags:\n  - entity\n  - priority/medium\n---\n# Page\n"
+    weight, tags = parse_weight_and_tags(content)
+    assert tags == ["priority/medium"]
+
+
+def test_parse_weight_and_tags_float_weight():
+    """Handles float weight values."""
+    content = "---\nweight: 2.5\ntags: [concept]\n---\n# Page\n"
+    weight, tags = parse_weight_and_tags(content)
+    assert weight == 2.5
+
+
+def test_write_computed_score_new_field():
+    """Adds computed_score to frontmatter that doesn't have it."""
+    content = "---\naliases: []\ntags: [concept]\nstatus: active\n---\n# Page\n\nBody text.\n"
+    result = write_computed_score(content, 7.3)
+    assert "computed_score: 7.3" in result
+    assert "# Page" in result
+    assert "Body text." in result
+
+
+def test_write_computed_score_update_existing():
+    """Updates existing computed_score value."""
+    content = "---\naliases: []\ncomputed_score: 3.1\ntags: [concept]\n---\n# Page\n"
+    result = write_computed_score(content, 8.5)
+    assert "computed_score: 8.5" in result
+    assert "computed_score: 3.1" not in result
+
+
+def test_write_computed_score_no_frontmatter():
+    """Returns content unchanged if no frontmatter."""
+    content = "# Page\n\nNo frontmatter here.\n"
+    result = write_computed_score(content, 5.0)
+    assert result == content
