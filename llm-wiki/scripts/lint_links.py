@@ -73,6 +73,125 @@ def parse_frontmatter_aliases(content: str) -> list[str]:
     return []
 
 
+KNOWN_LINK_TYPES = {
+    "references", "contradicts", "depends_on", "supersedes",
+    "authored_by", "works_at", "mentions",
+}
+
+
+def parse_typed_links(content: str) -> list[dict]:
+    """Extract typed links from YAML frontmatter.
+
+    Handles format:
+        links:
+          - {target: "slug", type: "references"}
+          - {target: "other", type: "contradicts"}
+    Also handles unquoted values.
+    """
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content, re.DOTALL)
+    if not match:
+        return []
+    fm = match.group(1)
+    links = []
+    for m in re.finditer(
+        r'-\s*\{[^}]*target:\s*"?([^",}\s]+)"?\s*,\s*type:\s*"?([^",}\s]+)"?[^}]*\}',
+        fm,
+    ):
+        links.append({"target": m.group(1), "type": m.group(2)})
+    # Also handle reversed order: {type: ..., target: ...}
+    for m in re.finditer(
+        r'-\s*\{[^}]*type:\s*"?([^",}\s]+)"?\s*,\s*target:\s*"?([^",}\s]+)"?[^}]*\}',
+        fm,
+    ):
+        links.append({"target": m.group(2), "type": m.group(1)})
+    return links
+
+
+def _parse_updated_date(content: str) -> str | None:
+    """Extract the 'updated' date from frontmatter."""
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content, re.DOTALL)
+    if not match:
+        return None
+    m = re.search(r"^updated:\s*(\d{4}-\d{2}-\d{2})", match.group(1), re.MULTILINE)
+    return m.group(1) if m else None
+
+
+def _parse_timeline_dates(content: str) -> list[str]:
+    """Extract all dates from timeline entries (below the --- separator in body)."""
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    fm_match = re.match(r"^---\s*\n.*?\n(?:---|\.\.\.)(?:\s*\n)", content, re.DOTALL)
+    if not fm_match:
+        return []
+    body = content[fm_match.end():]
+    parts = re.split(r"\n---\s*\n", body, maxsplit=1)
+    if len(parts) < 2:
+        return []
+    timeline = parts[1]
+    return re.findall(r"^-\s+(\d{4}-\d{2}-\d{2})", timeline, re.MULTILINE)
+
+
+def check_stale_pages(vault_path) -> list[dict]:
+    """Find pages whose compiled truth is older than latest timeline entry."""
+    vault_path = Path(vault_path)
+    results = []
+    wiki_dir = vault_path / "wiki"
+    if not wiki_dir.is_dir():
+        return results
+    for root, dirs, files in os.walk(str(wiki_dir)):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for fname in files:
+            if not fname.endswith(".md") or fname.endswith(".snapshot.md"):
+                continue
+            full = os.path.join(root, fname)
+            rel = os.path.relpath(full, vault_path)
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+            except OSError:
+                continue
+            updated = _parse_updated_date(content)
+            if not updated:
+                continue
+            timeline_dates = _parse_timeline_dates(content)
+            if not timeline_dates:
+                continue
+            latest = max(timeline_dates)
+            if latest > updated:
+                results.append({"page": rel, "updated": updated, "latest_timeline": latest})
+    return results
+
+
+def check_unbalanced_pages(vault_path, threshold: int = 5) -> list[dict]:
+    """Find pages with many timeline entries since last compiled-truth update."""
+    vault_path = Path(vault_path)
+    results = []
+    wiki_dir = vault_path / "wiki"
+    if not wiki_dir.is_dir():
+        return results
+    for root, dirs, files in os.walk(str(wiki_dir)):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for fname in files:
+            if not fname.endswith(".md") or fname.endswith(".snapshot.md"):
+                continue
+            full = os.path.join(root, fname)
+            rel = os.path.relpath(full, vault_path)
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+            except OSError:
+                continue
+            updated = _parse_updated_date(content)
+            if not updated:
+                continue
+            timeline_dates = _parse_timeline_dates(content)
+            newer = [d for d in timeline_dates if d > updated]
+            if len(newer) >= threshold:
+                results.append({"page": rel, "updated": updated, "new_entries": len(newer)})
+    return results
+
+
 def build_resolution_index(vault_path: Path) -> dict:
     """Build an index mapping normalized names to file paths.
 
@@ -520,6 +639,14 @@ def main():
         "--fix", action="store_true",
         help="Auto-fix alias mismatches by rewriting [[alias]] → [[filename|alias]]",
     )
+    parser.add_argument(
+        "--stale", action="store_true",
+        help="Check for stale pages (compiled truth older than latest timeline)",
+    )
+    parser.add_argument(
+        "--unbalanced", action="store_true",
+        help="Check for unbalanced pages (many timeline entries without rewrite)",
+    )
 
     args = parser.parse_args()
     vault_path = Path(args.vault_path).resolve()
@@ -561,6 +688,29 @@ def main():
         report["summary"]["fixes_applied"] = fixes
 
     print_report(report, json_output=args.json_output)
+
+    if args.stale:
+        stale = check_stale_pages(vault_path)
+        if stale:
+            if args.json_output:
+                print(json.dumps({"stale": stale}, indent=2))
+            else:
+                print(f"STALE ({len(stale)} pages need compiled-truth update):")
+                for s in stale:
+                    print(f"  {s['page']}  updated={s['updated']}  latest_timeline={s['latest_timeline']}")
+                print()
+
+    if args.unbalanced:
+        unbalanced = check_unbalanced_pages(vault_path)
+        if unbalanced:
+            if args.json_output:
+                print(json.dumps({"unbalanced": unbalanced}, indent=2))
+            else:
+                print(f"UNBALANCED ({len(unbalanced)} pages need rewrite):")
+                for u in unbalanced:
+                    print(f"  {u['page']}  updated={u['updated']}  new_entries={u['new_entries']}")
+                print()
+
     sys.exit(0 if report["clean"] else 1)
 
 
