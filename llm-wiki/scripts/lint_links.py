@@ -662,12 +662,17 @@ def inject_referenced_by(vault_path) -> int:
                 continue
             reverse_map.setdefault(target, []).append((slug, link["type"]))
 
-        # Wikilinks from prose
+        # Wikilinks from prose (excluding referenced-by blocks to avoid circular refs)
         content_norm = content.replace("\r\n", "\n").replace("\r", "\n")
         fm_match = re.match(
             r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content_norm, re.DOTALL
         )
         body = content_norm[fm_match.end():] if fm_match else content_norm
+        # Strip referenced-by blocks before scanning
+        body = re.sub(
+            r"<!-- referenced-by:start -->.*?<!-- referenced-by:end -->",
+            "", body, flags=re.DOTALL,
+        )
         for raw_target in WIKILINK_RE.findall(body):
             target = extract_link_target(raw_target)
             if not target or target == slug:

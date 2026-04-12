@@ -264,3 +264,34 @@ class TestInjectReferencedBy:
         assert "(depends_on)" in content
         # Old content should be replaced
         assert "[[old-page]]" not in content
+
+    def test_inject_referenced_by_no_circular(self, tmp_path):
+        """Injected referenced-by blocks must not create circular back-references."""
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+
+        (wiki / "page-a.md").write_text(textwrap.dedent("""\
+            ---
+            links:
+              - {target: "page-b", type: "references"}
+            ---
+            # Page A
+        """))
+
+        (wiki / "page-b.md").write_text(textwrap.dedent("""\
+            ---
+            title: "Page B"
+            ---
+            # Page B
+        """))
+
+        # First run: injects [[page-a]] into page-b
+        inject_referenced_by(tmp_path)
+        content_b = (wiki / "page-b.md").read_text()
+        assert "[[page-a]]" in content_b
+
+        # Second run: should NOT inject [[page-b]] into page-a
+        # (the [[page-a]] inside page-b's referenced-by block is not a real link)
+        inject_referenced_by(tmp_path)
+        content_a = (wiki / "page-a.md").read_text()
+        assert "<!-- referenced-by:start -->" not in content_a
