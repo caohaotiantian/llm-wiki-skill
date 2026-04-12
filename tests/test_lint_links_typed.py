@@ -12,6 +12,7 @@ from lint_links import (
     KNOWN_LINK_TYPES,
     check_stale_pages,
     check_unbalanced_pages,
+    inject_referenced_by,
     parse_typed_links,
 )
 
@@ -189,3 +190,77 @@ class TestCheckUnbalancedPages:
         (wiki / "test.md").write_text(content)
         results = check_unbalanced_pages(tmp_path)
         assert len(results) == 0
+
+
+# ---------------------------------------------------------------------------
+# inject_referenced_by
+# ---------------------------------------------------------------------------
+
+class TestInjectReferencedBy:
+    def test_inject_referenced_by(self, tmp_path):
+        """Two pages, one links to the other — verify block appears."""
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+
+        (wiki / "page-a.md").write_text(textwrap.dedent("""\
+            ---
+            links:
+              - {target: "page-b", type: "references"}
+            ---
+            # Page A
+
+            See [[page-b]] for details.
+        """))
+
+        (wiki / "page-b.md").write_text(textwrap.dedent("""\
+            ---
+            title: "Page B"
+            ---
+            # Page B
+
+            Some content.
+        """))
+
+        count = inject_referenced_by(tmp_path)
+        assert count == 1
+
+        content = (wiki / "page-b.md").read_text()
+        assert "<!-- referenced-by:start -->" in content
+        assert "<!-- referenced-by:end -->" in content
+        assert "[[page-a]]" in content
+        assert "(references)" in content
+
+    def test_inject_referenced_by_updates_existing(self, tmp_path):
+        """Block already exists — gets updated with new content."""
+        wiki = tmp_path / "wiki"
+        wiki.mkdir()
+
+        (wiki / "page-a.md").write_text(textwrap.dedent("""\
+            ---
+            links:
+              - {target: "page-b", type: "depends_on"}
+            ---
+            # Page A
+        """))
+
+        (wiki / "page-b.md").write_text(textwrap.dedent("""\
+            ---
+            title: "Page B"
+            ---
+            # Page B
+
+            <!-- referenced-by:start -->
+            ## Referenced by
+
+            - [[old-page]] (references)
+            <!-- referenced-by:end -->
+        """))
+
+        count = inject_referenced_by(tmp_path)
+        assert count == 1
+
+        content = (wiki / "page-b.md").read_text()
+        assert "[[page-a]]" in content
+        assert "(depends_on)" in content
+        # Old content should be replaced
+        assert "[[old-page]]" not in content

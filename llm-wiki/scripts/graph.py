@@ -150,7 +150,9 @@ def build_graph(vault_path: str | Path) -> nx.DiGraph:
     if not wiki_dir.is_dir():
         return g
 
-    md_files = sorted(wiki_dir.glob("*.md"))
+    md_files = sorted(
+        f for f in wiki_dir.rglob("*.md") if not f.name.endswith(".snapshot.md")
+    )
     # First pass: register nodes
     for fp in md_files:
         slug = _slug_from_path(str(fp))

@@ -4,7 +4,12 @@
 -- For OpenAI (1536 dims): ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector(1536);
 
 CREATE EXTENSION IF NOT EXISTS vector;
-CREATE EXTENSION IF NOT EXISTS pg_trgm;
+DO $$
+BEGIN
+    CREATE EXTENSION IF NOT EXISTS pg_trgm;
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pg_trgm not available — fuzzy title matching disabled';
+END $$;
 
 CREATE TABLE IF NOT EXISTS pages (
     slug            TEXT PRIMARY KEY,
@@ -21,7 +26,12 @@ CREATE TABLE IF NOT EXISTS pages (
 CREATE INDEX IF NOT EXISTS pages_type_idx         ON pages (type);
 CREATE INDEX IF NOT EXISTS pages_frontmatter_idx  ON pages USING GIN (frontmatter);
 CREATE INDEX IF NOT EXISTS pages_search_idx       ON pages USING GIN (search_vector);
-CREATE INDEX IF NOT EXISTS pages_title_trgm_idx   ON pages USING GIN (title gin_trgm_ops);
+DO $$
+BEGIN
+    CREATE INDEX IF NOT EXISTS pages_title_trgm_idx ON pages USING GIN (title gin_trgm_ops);
+EXCEPTION WHEN OTHERS THEN
+    RAISE NOTICE 'pg_trgm index skipped — not available in this environment';
+END $$;
 
 -- Trigger to maintain search_vector
 CREATE OR REPLACE FUNCTION pages_search_trigger() RETURNS trigger AS $$

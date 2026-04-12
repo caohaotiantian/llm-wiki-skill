@@ -31,6 +31,7 @@ const port = parseInt(args.port, 10);
 
 console.error(`[pglite-sidecar] Starting with data-dir=${dataDir} port=${port}`);
 
+// Note: pg_trgm is not available in PGlite — fuzzy title matching is disabled
 const db = new PGlite(dataDir, {
   extensions: { vector },
 });
@@ -76,11 +77,9 @@ async function handleRpc(body) {
 
     case "execute": {
       if (!sql) throw new Error("Missing 'sql' in params");
-      const result = await db.exec(sql, sqlArgs || []);
-      // PGlite exec returns an array of results
-      const affected = Array.isArray(result)
-        ? result.reduce((sum, r) => sum + (r.affectedRows || 0), 0)
-        : result.affectedRows || 0;
+      // PGlite's exec() doesn't support parameterized queries — use query()
+      const result = await db.query(sql, sqlArgs || []);
+      const affected = result.rows.length;
       return { affected };
     }
 

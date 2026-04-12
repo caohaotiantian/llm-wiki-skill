@@ -16,6 +16,8 @@ import json
 import os
 import sys
 
+DEFAULT_MODEL = "claude-haiku-4-5-20251001"
+
 
 def expand_query(query: str, max_expansions: int = 3) -> list[str]:
     """Expand a query into multiple paraphrases for better retrieval.
@@ -42,7 +44,7 @@ def expand_query(query: str, max_expansions: int = 3) -> list[str]:
     try:
         client = anthropic.Anthropic(api_key=api_key)
         response = client.messages.create(
-            model="claude-haiku-4-5-20251001",
+            model=DEFAULT_MODEL,
             max_tokens=300,
             messages=[{
                 "role": "user",

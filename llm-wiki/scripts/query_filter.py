@@ -311,7 +311,7 @@ def filter_pages(
     if not wiki_dir.is_dir():
         return results
 
-    for fp in sorted(wiki_dir.glob("*.md")):
+    for fp in sorted(wiki_dir.rglob("*.md")):
         content = fp.read_text(encoding="utf-8", errors="replace")
         fm = _parse_frontmatter(content)
         if matches_conditions(fm, conditions, file_path=str(fp)):

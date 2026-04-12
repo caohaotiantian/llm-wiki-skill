@@ -622,6 +622,106 @@ def collect_wiki_files(vault_path: Path) -> list[str]:
     return results
 
 
+def inject_referenced_by(vault_path) -> int:
+    """Inject or update '## Referenced by' blocks in wiki pages.
+
+    Scans all wiki pages for typed links (frontmatter) and wikilinks (prose),
+    builds a reverse map {target_slug: [(source_slug, link_type), ...]},
+    then injects/updates a marked block at the end of each target page.
+
+    Returns the number of pages modified.
+    """
+    vault_path = Path(vault_path)
+    wiki_dir = vault_path / "wiki"
+    if not wiki_dir.is_dir():
+        return 0
+
+    # Collect all pages
+    pages: dict[str, Path] = {}  # slug -> file path
+    for root, dirs, files in os.walk(str(wiki_dir)):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for fname in files:
+            if fname.endswith(".md") and not fname.endswith(".snapshot.md"):
+                fp = Path(root) / fname
+                pages[fp.stem] = fp
+
+    # Build reverse map: target_slug -> [(source_slug, link_type), ...]
+    reverse_map: dict[str, list[tuple[str, str]]] = {}
+
+    for slug, fp in pages.items():
+        try:
+            content = fp.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        # Typed links from frontmatter
+        typed = parse_typed_links(content)
+        for link in typed:
+            target = link["target"]
+            if target == slug:
+                continue
+            reverse_map.setdefault(target, []).append((slug, link["type"]))
+
+        # Wikilinks from prose
+        content_norm = content.replace("\r\n", "\n").replace("\r", "\n")
+        fm_match = re.match(
+            r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content_norm, re.DOTALL
+        )
+        body = content_norm[fm_match.end():] if fm_match else content_norm
+        for target in WIKILINK_RE.findall(body):
+            if target == slug:
+                continue
+            # Don't duplicate if already covered by a typed link
+            existing = reverse_map.get(target, [])
+            if not any(src == slug for src, _ in existing):
+                reverse_map.setdefault(target, []).append((slug, "references"))
+
+    # Inject/update blocks
+    modified = 0
+    start_marker = "<!-- referenced-by:start -->"
+    end_marker = "<!-- referenced-by:end -->"
+
+    for target_slug, backlinks in reverse_map.items():
+        if target_slug not in pages:
+            continue
+        fp = pages[target_slug]
+
+        # Sort backlinks for deterministic output
+        backlinks_sorted = sorted(set(backlinks))
+
+        lines = []
+        lines.append(start_marker)
+        lines.append("## Referenced by")
+        lines.append("")
+        for src_slug, link_type in backlinks_sorted:
+            lines.append(f"- [[{src_slug}]] ({link_type})")
+        lines.append(end_marker)
+        block = "\n".join(lines)
+
+        try:
+            content = fp.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        if start_marker in content and end_marker in content:
+            # Replace existing block
+            new_content = re.sub(
+                re.escape(start_marker) + r".*?" + re.escape(end_marker),
+                block,
+                content,
+                flags=re.DOTALL,
+            )
+        else:
+            # Append at end
+            new_content = content.rstrip("\n") + "\n\n" + block + "\n"
+
+        if new_content != content:
+            fp.write_text(new_content, encoding="utf-8")
+            modified += 1
+
+    return modified
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Scan wiki pages for wikilink issues: alias mismatches and missing targets.",
@@ -646,6 +746,10 @@ def main():
     parser.add_argument(
         "--unbalanced", action="store_true",
         help="Check for unbalanced pages (many timeline entries without rewrite)",
+    )
+    parser.add_argument(
+        "--referenced-by", action="store_true",
+        help="Inject/update '## Referenced by' blocks in wiki pages",
     )
 
     args = parser.parse_args()
@@ -710,6 +814,11 @@ def main():
                 for u in unbalanced:
                     print(f"  {u['page']}  updated={u['updated']}  new_entries={u['new_entries']}")
                 print()
+
+    if args.referenced_by:
+        count = inject_referenced_by(vault_path)
+        if not args.json_output:
+            print(f"Injected/updated referenced-by blocks in {count} page(s).")
 
     sys.exit(0 if report["clean"] else 1)
 
