@@ -1,21 +1,29 @@
 #!/usr/bin/env python3
 """Embedding provider interface for wiki index.
 
-Three providers:
+Providers:
 - NullProvider: returns empty embeddings, query falls back to keyword-only
 - LocalProvider: sentence-transformers/all-MiniLM-L6-v2 (384 dims, no API key)
-- OpenAIProvider: text-embedding-3-small (1536 dims, requires OPENAI_API_KEY)
+- RemoteProvider: any OpenAI-compatible embedding API (configurable via env vars)
+
+Configuration (environment variables):
+    EMBEDDING_PROVIDER   Force provider: "openai"/"remote", "local", "null"
+    EMBEDDING_API_KEY    API key (falls back to OPENAI_API_KEY)
+    EMBEDDING_BASE_URL   Custom endpoint URL (e.g. http://localhost:11434/v1 for Ollama)
+    EMBEDDING_MODEL      Model name (default: text-embedding-3-small)
+    EMBEDDING_DIMENSION  Override vector dimension (default: auto-detect)
 
 Usage:
     python embeddings.py --provider null --text "hello world"
-    python embeddings.py --provider local --text "test embedding"
+    python embeddings.py --provider remote --text "test embedding"
+    EMBEDDING_BASE_URL=http://localhost:11434/v1 python embeddings.py --text "test"
 """
 from __future__ import annotations
 
 import argparse
 import json
 import os
-from typing import Protocol, runtime_checkable
+from typing import Any, Protocol, runtime_checkable
 
 
 @runtime_checkable
@@ -60,45 +68,84 @@ class LocalProvider:
         return f"local/{self._model_name}"
 
 
-class OpenAIProvider:
-    """OpenAI embeddings via API (1536 dims)."""
+class RemoteProvider:
+    """Remote embeddings via any OpenAI-compatible API.
 
-    def __init__(self, model: str = "text-embedding-3-small"):
+    Works with OpenAI, Azure OpenAI, Ollama, vLLM, Together, Groq,
+    DeepSeek, and any other provider exposing /v1/embeddings.
+    """
+
+    def __init__(
+        self,
+        api_key: str | None = None,
+        base_url: str | None = None,
+        model: str = "text-embedding-3-small",
+        dimension: int | None = None,
+    ):
         import openai
 
-        self._client = openai.OpenAI()
+        kwargs: dict[str, Any] = {}
+        if api_key:
+            kwargs["api_key"] = api_key
+        if base_url:
+            kwargs["base_url"] = base_url
+        self._client = openai.OpenAI(**kwargs)
         self._model = model
+        self._dimension = dimension
 
     def dimension(self) -> int:
-        return 1536
+        if self._dimension is None:
+            result = self.embed_batch(["dimension probe"])
+            self._dimension = len(result[0]) if result and result[0] else 0
+        return self._dimension
 
     def embed_batch(self, texts: list[str]) -> list[list[float]]:
         response = self._client.embeddings.create(input=texts, model=self._model)
         return [item.embedding for item in response.data]
 
     def name(self) -> str:
-        return f"openai/{self._model}"
+        return f"remote/{self._model}"
+
+
+# Backward compatibility alias
+OpenAIProvider = RemoteProvider
+
+
+def _make_remote_provider() -> RemoteProvider:
+    """Create a RemoteProvider from environment variables."""
+    dimension_str = os.environ.get("EMBEDDING_DIMENSION")
+    return RemoteProvider(
+        api_key=os.environ.get("EMBEDDING_API_KEY") or os.environ.get("OPENAI_API_KEY"),
+        base_url=os.environ.get("EMBEDDING_BASE_URL"),
+        model=os.environ.get("EMBEDDING_MODEL", "text-embedding-3-small"),
+        dimension=int(dimension_str) if dimension_str else None,
+    )
 
 
 def get_provider(provider_name: str | None = None) -> EmbeddingProvider:
     """Get an embedding provider by name or auto-detect.
 
-    Auto-detection order (when provider_name is None):
-    1. If OPENAI_API_KEY is set, use OpenAI
-    2. If sentence-transformers is installed, use local
-    3. Fall back to null (keyword-only search)
+    Resolution order (when provider_name is None):
+    1. Check EMBEDDING_PROVIDER env var
+    2. If EMBEDDING_API_KEY or OPENAI_API_KEY is set, use remote
+    3. If sentence-transformers is installed, use local
+    4. Fall back to null (keyword-only search)
     """
+    if provider_name is None:
+        provider_name = os.environ.get("EMBEDDING_PROVIDER")
+
     if provider_name == "null":
         return NullProvider()
-    if provider_name == "openai":
-        return OpenAIProvider()
     if provider_name == "local":
         return LocalProvider()
+    if provider_name in ("openai", "remote"):
+        return _make_remote_provider()
 
     if provider_name is None:
-        if os.environ.get("OPENAI_API_KEY"):
+        api_key = os.environ.get("EMBEDDING_API_KEY") or os.environ.get("OPENAI_API_KEY")
+        if api_key:
             try:
-                return OpenAIProvider()
+                return _make_remote_provider()
             except ImportError:
                 pass
         try:
@@ -112,7 +159,8 @@ def get_provider(provider_name: str | None = None) -> EmbeddingProvider:
 
 def main():
     parser = argparse.ArgumentParser(description="Embedding provider CLI.")
-    parser.add_argument("--provider", default=None, help="Provider name: null, local, openai (default: auto-detect)")
+    parser.add_argument("--provider", default=None,
+                        help="Provider: null, local, openai/remote (default: auto-detect)")
     parser.add_argument("--text", nargs="+", help="Text(s) to embed")
     parser.add_argument("--json", dest="json_output", action="store_true", help="JSON output")
 

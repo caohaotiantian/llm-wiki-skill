@@ -660,16 +660,16 @@ def main():
 
     p_rebuild = sub.add_parser("rebuild", help="Full index rebuild")
     p_rebuild.add_argument("vault_path", type=Path, help="Path to vault directory")
-    p_rebuild.add_argument("--provider", default=None, help="Embedding provider: null, local, openai")
+    p_rebuild.add_argument("--provider", default=None, help="Embedding provider: null, local, openai/remote (default: auto-detect)")
 
     p_sync = sub.add_parser("sync", help="Incremental sync")
     p_sync.add_argument("vault_path", type=Path, help="Path to vault directory")
-    p_sync.add_argument("--provider", default=None, help="Embedding provider: null, local, openai")
+    p_sync.add_argument("--provider", default=None, help="Embedding provider: null, local, openai/remote (default: auto-detect)")
 
     p_query = sub.add_parser("query", help="Hybrid search")
     p_query.add_argument("vault_path", type=Path, help="Path to vault directory")
     p_query.add_argument("query_text", help="Search query")
-    p_query.add_argument("--provider", default=None, help="Embedding provider: null, local, openai")
+    p_query.add_argument("--provider", default=None, help="Embedding provider: null, local, openai/remote (default: auto-detect)")
     p_query.add_argument("--json", action="store_true", dest="json_output", default=False, help="Output results as JSON")
 
     p_verify = sub.add_parser("verify", help="Health check")
