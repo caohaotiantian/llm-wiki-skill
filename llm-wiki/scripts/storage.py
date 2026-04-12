@@ -143,6 +143,22 @@ def _parse_frontmatter(content: str) -> dict:
     return result
 
 
+def _parse_typed_links(content: str) -> list[dict]:
+    """Parse typed links from frontmatter content."""
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content, re.DOTALL)
+    if not match:
+        return []
+    fm = match.group(1)
+    links = []
+    for m in re.finditer(
+        r'-\s*\{[^}]*target:\s*"?([^",}\s]+)"?\s*,\s*type:\s*"?([^",}\s]+)"?[^}]*\}',
+        fm,
+    ):
+        links.append({"target": m.group(1), "type": m.group(2)})
+    return links
+
+
 def _parse_page_from_markdown(slug: str, content: str) -> Page:
     """Parse a markdown file into a Page object."""
     frontmatter = _parse_frontmatter(content)
@@ -169,6 +185,12 @@ def _parse_page_from_markdown(slug: str, content: str) -> Page:
     parts = re.split(r"\n---\s*\n", body, maxsplit=1)
     compiled_truth = parts[0].strip()
     timeline = parts[1].strip() if len(parts) > 1 else ""
+
+    # Parse typed links from frontmatter and override whatever the simple
+    # parser produced (it cannot handle YAML list-of-dicts).
+    typed_links = _parse_typed_links(content)
+    if typed_links:
+        frontmatter["links"] = typed_links
 
     return Page(
         slug=slug,

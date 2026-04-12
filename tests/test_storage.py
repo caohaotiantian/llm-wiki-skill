@@ -11,6 +11,7 @@ from storage import (
     Page, Link, SearchHit, SyncReport,
     FileVaultBackend, DatabaseBackend, get_backend,
     StorageBackend, _parse_frontmatter, _parse_page_from_markdown,
+    _parse_typed_links,
 )
 
 
@@ -148,13 +149,10 @@ def test_file_vault_backend_backlinks(tmp_path):
 
     backend = FileVaultBackend()
     backend.init(tmp_path)
-    # Note: FileVaultBackend needs to parse links from frontmatter
-    # The _parse_frontmatter doesn't handle the nested list format perfectly
-    # but backlinks should still be detected
     backlinks = backend.get_backlinks("b")
-    # This might not work perfectly with the simple frontmatter parser
-    # Asserting the mechanism works at all
-    assert isinstance(backlinks, list)
+    assert len(backlinks) == 1
+    assert backlinks[0].from_slug == "a"
+    assert backlinks[0].link_type == "references"
 
 
 def test_file_vault_backend_sync(tmp_path):
