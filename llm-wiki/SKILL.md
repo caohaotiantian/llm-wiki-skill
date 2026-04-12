@@ -194,6 +194,29 @@ Compute SHA-256 with: `python3 -c "import hashlib,sys; print(hashlib.sha256(open
 
 ---
 
+## Page Model: Compiled Truth + Timeline
+
+Every wiki page follows a two-zone structure separated by a horizontal rule (`---`):
+
+- **Above the rule — Compiled Truth:** The current best understanding. Rewrite in place when new evidence changes the picture.
+- **Below the rule — Timeline:** Append-only evidence trail of dated entries (newest first). Never edit, only extend.
+
+See `references/schema.md` → "Compiled Truth + Timeline Model" for the full convention and examples.
+
+### Typed Links
+
+Pages declare relationships in frontmatter:
+
+```yaml
+links:
+  - {target: "page-slug", type: "references"}
+  - {target: "other-page", type: "contradicts"}
+```
+
+Supported types: `references`, `contradicts`, `depends_on`, `supersedes`, `authored_by`, `works_at`, `mentions`. The list is extensible. Wikilinks in prose still work for readability; frontmatter `links:` is the authoritative edge set for graph queries.
+
+---
+
 ## Ingest
 
 Ingestion is the core operation. When the user provides source material (files, URLs, pasted text):
@@ -219,7 +242,7 @@ For each significant concept, entity, or topic found in the source:
 - **If a wiki page already exists**: Update it with new information, marking the source. Merge, don't duplicate.
 - **If it's genuinely new**: Create a new page using the templates in `schema.md`
 
-Each wiki page should have:
+Each wiki page should follow the compiled-truth/timeline model:
 
 ```markdown
 ---
@@ -227,6 +250,8 @@ aliases: []
 tags: []
 sources:
   - "[[raw/articles/source-name]]"
+links:
+  - {target: "related-concept", type: "references"}
 created: YYYY-MM-DD
 updated: YYYY-MM-DD
 status: active
@@ -237,7 +262,7 @@ status: active
 One-to-two sentence summary for quick scanning.
 
 ## Overview
-<!-- Core description -->
+<!-- Core description — this is compiled truth, rewritten on new evidence -->
 
 ## Details
 <!-- Deeper content, organized by the topic's natural structure -->
@@ -248,13 +273,17 @@ One-to-two sentence summary for quick scanning.
 - Part of [[Broader Topic]]
 
 ## Open Questions
-<!-- Use callouts to highlight question context -->
 > [!question] Question text
 > Why this matters and what we'd need to answer it.
 
-## Sources
-- [[raw/articles/source-name]] — extracted on YYYY-MM-DD
+---
+
+## Timeline
+
+- YYYY-MM-DD: Created from [[raw/articles/source-name]]
 ```
+
+Everything above the `---` separator is compiled truth (rewritable). Everything below is the timeline (append-only). Add typed links to frontmatter for each relationship.
 
 **Linking rules:**
 - The link target in `[[wikilinks]]` MUST be the exact filename of the target page (without `.md`). For example, if the file is `wiki/concepts/artificial-intelligence.md`, link to it as `[[artificial-intelligence]]`.
@@ -424,9 +453,19 @@ The scan detects:
 
 When the user asks a question about the wiki's knowledge:
 
-1. **Search**: Read `index.md` to identify relevant pages. For larger wikis, use grep/glob to find pages mentioning key terms.
+1. **Search**: If the index is available, use hybrid search for best results:
+   ```bash
+   python <skill-dir>/scripts/index.py query <vault-path> "user's question" --json
+   ```
+   This combines vector similarity + keyword search with reciprocal rank fusion (RRF). Results include chunk excerpts, scores, and staleness flags. If the index is not available, fall back to reading `index.md` and using grep/glob.
+
+   **Attribute filtering**: Narrow the search with frontmatter filters:
+   ```bash
+   python <skill-dir>/scripts/query_filter.py <vault-path> --where "type=concept tag=strategy" --json
+   ```
+
 2. **Rank by score**: Sort candidate pages by `computed_score` descending (from frontmatter). Prioritize reading high-scored pages first — they represent the most valued content in the wiki.
-3. **Retrieve**: Read the relevant wiki pages, starting with the highest-scored candidates.
+3. **Retrieve**: Read the relevant wiki pages, starting with the highest-scored candidates. Pay attention to staleness flags — stale pages have new timeline entries that haven't been synthesized into compiled truth yet.
 4. **Synthesize**: Answer the question using the wiki's compiled knowledge. When multiple pages cover the same topic, give more weight to higher-scored pages. Cite sources with `[[wikilinks]]` — list higher-scored sources first.
 5. **Update counters**: After the query completes:
    - Increment `access_count` in `.stats.json` for every wiki page **read** during this query.
@@ -458,7 +497,9 @@ Linting ensures wiki health. Run it periodically or when the user asks.
 |-------|-----------------|---------------|
 | **Dead links** | `[[wikilinks]]` pointing to non-existent pages | Two-phase fix (see below) |
 | **Orphaned pages** | Pages with no incoming links | Add links from related pages or index |
-| **Stale content** | Pages whose sources have been updated since last compile | Flag for re-ingestion |
+| **Stale compiled truth** | Compiled truth `updated` date older than latest timeline entry | Flag for rewrite |
+| **Unbalanced pages** | 5+ timeline entries since last compiled-truth update | Flag for review |
+| **Stale sources** | Pages whose sources have been updated since last compile | Flag for re-ingestion |
 | **Missing cross-refs** | Pages that mention concepts without linking them | Add `[[wikilinks]]` |
 | **Index drift** | Pages that exist but aren't in `index.md` | Add to index |
 | **Duplicate concepts** | Multiple pages covering the same topic | Suggest merge |
@@ -466,6 +507,14 @@ Linting ensures wiki health. Run it periodically or when the user asks.
 | **Frontmatter issues** | Missing required fields, outdated timestamps | Fix automatically |
 | **Schema drift** | Pages using outdated frontmatter schema (missing new fields, deprecated tags) | Migrate to current schema |
 | **Score staleness** | Pages missing `computed_score` or scores not recalculated since last full lint | Yes — run full `score_pages.py` |
+
+#### Stale and unbalanced checks
+
+```bash
+python <skill-dir>/scripts/lint_links.py <vault-path> --stale --unbalanced
+```
+
+**Stale pages** have new evidence (timeline entries) that hasn't been synthesized into compiled truth yet. **Unbalanced pages** have accumulated many timeline entries without a compiled-truth rewrite, signaling drift that needs human review.
 
 #### Dead link resolution (two-phase)
 
@@ -721,12 +770,82 @@ Users can adjust scoring behavior in two ways:
 
 ---
 
+## Index Management
+
+The wiki can be backed by a PGlite or Postgres index for hybrid retrieval (vector + keyword search with reciprocal rank fusion). The index is a **derived cache** — deleting it is always safe, and it can be rebuilt at any time.
+
+### Setup
+
+The index requires either:
+- **PGlite sidecar** (default): Node.js 18+ required. Start with `node <skill-dir>/scripts/sidecar/server.js --data-dir <vault-path>/index`
+- **Native Postgres**: Set `DATABASE_URL` environment variable. No Node.js needed.
+
+Embeddings require one of:
+- **Local** (default): `pip install sentence-transformers` — 384-dim, CPU, no API key
+- **OpenAI**: Set `OPENAI_API_KEY` — 1536-dim, better recall, ~$0.0001/page
+- **None**: Keyword-only search (no embedding dependency)
+
+### Commands
+
+```bash
+# Build index from scratch (idempotent)
+python <skill-dir>/scripts/index.py rebuild <vault-path>
+
+# Incremental sync (only re-index changed pages)
+python <skill-dir>/scripts/index.py sync <vault-path>
+
+# Hybrid search
+python <skill-dir>/scripts/index.py query <vault-path> "search query" --json
+
+# Health check
+python <skill-dir>/scripts/index.py verify <vault-path>
+```
+
+Run `sync` after every successful ingest and on conversation start. Run `verify` as part of lint.
+
+---
+
+## Graph Analysis
+
+The wiki's link graph can be analyzed for structure, importance, and clusters. Requires `pip install networkx` (optional — graph features degrade gracefully without it).
+
+```bash
+# Find pages near a given page
+python <skill-dir>/scripts/graph.py <vault-path> neighbors <slug> --depth 2
+
+# Shortest path between two pages
+python <skill-dir>/scripts/graph.py <vault-path> path <from-slug> <to-slug>
+
+# Page importance ranking
+python <skill-dir>/scripts/graph.py <vault-path> centrality --metric pagerank --limit 20
+
+# Topical clusters
+python <skill-dir>/scripts/graph.py <vault-path> communities
+
+# Orphaned pages (no links in or out)
+python <skill-dir>/scripts/graph.py <vault-path> orphans
+
+# Interactive graph visualization (opens in browser)
+python <skill-dir>/scripts/graph.py <vault-path> stats --export html > wiki-graph.html
+```
+
+Graph analysis works from typed links in frontmatter (authoritative) with wikilinks in prose as fallback edges.
+
+---
+
 ## Bundled Resources
 
-- `references/schema.md` — Default page templates and frontmatter conventions
+- `references/schema.md` — Default page templates, frontmatter conventions, compiled-truth/timeline model, and typed links specification
 - `references/obsidian.md` — Obsidian operating reference: URI scheme, CLI commands, flavored markdown syntax, vault config, recommended plugins, and retrieval patterns
 - `scripts/extract.py` — Document extraction using Docling (optional dependency). Output goes to `raw/extracted/` by default.
 - `scripts/scan.py` — Scans `raw/` for new, failed, or low-quality extractions. Supports periodic scanning and auto-extraction.
 - `scripts/diff_sources.py` — Structured diff between source versions for incremental re-ingestion
 - `scripts/score_pages.py` — Computes composite page scores from query frequency, access count, cross-reference density, manual weight, and priority tags. Writes `computed_score` to page frontmatter. Supports `--pages` for incremental scoring and `--json` for structured output.
-- `scripts/lint_links.py` — Wikilink validator: scans for alias mismatches (`[[alias]]` that should be `[[filename|alias]]`) and missing link targets. Supports vault-wide lint and targeted post-ingest validation. Use `--fix` to auto-repair alias mismatches, `--json` for structured output.
+- `scripts/lint_links.py` — Wikilink validator: scans for alias mismatches (`[[alias]]` that should be `[[filename|alias]]`) and missing link targets. Supports `--fix` for auto-repair, `--stale` / `--unbalanced` for compiled-truth health, `--json` for structured output.
+- `scripts/chunking.py` — Recursive text chunking (300 words, 50-word overlap) with page-aware mode that separates compiled truth from timeline.
+- `scripts/embeddings.py` — Embedding provider interface with null/local/OpenAI implementations. Auto-detects available provider.
+- `scripts/index.py` — Index management: rebuild, sync, query (hybrid RRF search), verify (health check).
+- `scripts/graph.py` — Graph analysis with NetworkX: neighbors, shortest path, centrality, communities, orphans. Supports Cytoscape.js HTML export.
+- `scripts/query_filter.py` — Attribute-based filtering: `--where "type=concept tag=strategy confidence>=0.7"`.
+- `scripts/expansion.py` — Multi-query expansion via Anthropic API for better retrieval recall. Gated on `ANTHROPIC_API_KEY`.
+- `scripts/storage.py` — Pluggable StorageBackend protocol with FileVaultBackend (file-first, default) and DatabaseBackend (DB-first, opt-in).
