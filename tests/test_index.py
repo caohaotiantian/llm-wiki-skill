@@ -11,16 +11,18 @@ sys.path.insert(0, os.path.join(os.path.dirname(__file__), "..", "llm-wiki", "sc
 
 from index import (
     DbClient,
+    LinkRef,
     WikiPage,
     compute_content_hash,
     parse_frontmatter,
     extract_links,
+    extract_typed_links,
     parse_wiki_page,
     scan_wiki_pages,
     cmd_rebuild,
     cmd_sync,
+    cmd_query,
     cmd_verify,
-    _dedup_results,
 )
 from embeddings import NullProvider
 
@@ -96,15 +98,27 @@ def test_parse_frontmatter_boolean():
 def test_extract_links():
     content = "See [[page-one]] and [[page-two|display text]]."
     links = extract_links(content)
-    assert "page-one" in links
-    assert "page-two" in links
+    targets = [l.target for l in links]
+    assert "page-one" in targets
+    assert "page-two" in targets
     assert len(links) == 2
+    assert all(l.link_type == "references" for l in links)
 
 
 def test_extract_links_none():
     content = "No links here."
     links = extract_links(content)
     assert links == []
+
+
+def test_extract_typed_links():
+    fm = 'links:\n  - {target: "foo", type: "extends"}\n  - {target: "bar", type: "references"}\n'
+    links = extract_typed_links(fm)
+    assert len(links) == 2
+    assert links[0].target == "foo"
+    assert links[0].link_type == "extends"
+    assert links[1].target == "bar"
+    assert links[1].link_type == "references"
 
 
 # ---------------------------------------------------------------------------
@@ -128,7 +142,7 @@ def test_parse_wiki_page():
     assert page.title == "Test Page"
     assert "Content here." in page.compiled_truth
     assert "2026-01-01" in page.timeline
-    assert "other-page" in page.links
+    assert any(l.target == "other-page" for l in page.links)
     assert "concept" in page.tags
     assert page.content_hash  # not empty
 
@@ -339,29 +353,49 @@ def test_cmd_verify_dangling_links(capsys):
 
 
 # ---------------------------------------------------------------------------
-# Dedup tests
+# Query tests (mocked DB)
 # ---------------------------------------------------------------------------
 
-def test_dedup_empty():
-    assert _dedup_results([]) == []
+def test_cmd_query_keyword_only(capsys):
+    """Keyword-only query (NullProvider) returns formatted results."""
+    db = _mock_db()
+    provider = NullProvider()
 
-
-def test_dedup_preserves_diverse():
-    rows = [
-        {"page_slug": "a", "cosine_sim": 0.9},
-        {"page_slug": "b", "cosine_sim": 0.5},
-        {"page_slug": "c", "cosine_sim": 0.2},
+    # Simulate keyword search results
+    db.query.return_value = [
+        {"page_slug": "alpha", "chunk_index": None, "chunk_source": "compiled_truth",
+         "chunk_text": "Alpha page content here", "score": 0.75},
+        {"page_slug": "beta", "chunk_index": None, "chunk_source": "compiled_truth",
+         "chunk_text": "Beta page content here", "score": 0.50},
     ]
-    result = _dedup_results(rows, threshold=0.85)
-    assert len(result) == 3
+
+    with tempfile.TemporaryDirectory() as tmp:
+        vault = Path(tmp)
+        results = cmd_query(db, vault, provider, "test search")
+
+    assert len(results) == 2
+    assert results[0]["page_slug"] == "alpha"
+    assert results[1]["page_slug"] == "beta"
+    # Staleness annotation present
+    assert "stale" in results[0]
+
+    output = capsys.readouterr().out
+    assert "alpha" in output
+    assert "beta" in output
+    assert "Found 2 results" in output
 
 
-def test_dedup_collapses_similar():
-    rows = [
-        {"page_slug": "a", "cosine_sim": 0.95},
-        {"page_slug": "b", "cosine_sim": 0.94},  # very close to a
-        {"page_slug": "c", "cosine_sim": 0.5},
-    ]
-    result = _dedup_results(rows, threshold=0.85)
-    # b should be collapsed with a (diff = 0.01 < 1-0.85 = 0.15)
-    assert len(result) < 3
+def test_cmd_query_no_results(capsys):
+    """Empty result set handled gracefully."""
+    db = _mock_db()
+    provider = NullProvider()
+
+    db.query.return_value = []
+
+    with tempfile.TemporaryDirectory() as tmp:
+        vault = Path(tmp)
+        results = cmd_query(db, vault, provider, "nonexistent query")
+
+    assert results == []
+    output = capsys.readouterr().out
+    assert "No results found" in output

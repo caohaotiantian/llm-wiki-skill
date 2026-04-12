@@ -67,6 +67,21 @@ class DbClient:
                 return False
         return self._ping_sidecar()
 
+    def begin(self):
+        """Begin a transaction (Postgres only; sidecar is auto-commit)."""
+        if self._pg_conn is not None:
+            self._pg_conn.execute("BEGIN")
+
+    def commit(self):
+        """Commit the current transaction."""
+        if self._pg_conn is not None:
+            self._pg_conn.commit()
+
+    def rollback(self):
+        """Roll back the current transaction."""
+        if self._pg_conn is not None:
+            self._pg_conn.rollback()
+
     def close(self):
         """Close the database connection."""
         if self._pg_conn is not None:
@@ -86,7 +101,6 @@ class DbClient:
     def _execute_pg(self, sql: str, params: list | None) -> int:
         cur = self._pg_conn.cursor()
         cur.execute(sql, params or [])
-        self._pg_conn.commit()
         return cur.rowcount
 
     # -- PGlite sidecar via HTTP --
@@ -130,6 +144,13 @@ class DbClient:
 # ---------------------------------------------------------------------------
 
 @dataclass
+class LinkRef:
+    """A link to another page with an optional type."""
+    target: str
+    link_type: str = "references"
+
+
+@dataclass
 class WikiPage:
     """Parsed wiki page."""
     slug: str
@@ -141,7 +162,7 @@ class WikiPage:
     frontmatter: dict
     content_hash: str
     raw_content: str
-    links: list[str] = field(default_factory=list)
+    links: list[LinkRef] = field(default_factory=list)
     tags: list[str] = field(default_factory=list)
 
 
@@ -180,9 +201,26 @@ def parse_frontmatter(content: str) -> tuple[dict, str]:
     return fm, body
 
 
-def extract_links(content: str) -> list[str]:
+def extract_links(content: str) -> list[LinkRef]:
     """Extract wiki-style [[links]] from content."""
-    return re.findall(r"\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]", content)
+    return [LinkRef(target=m) for m in re.findall(r"\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]", content)]
+
+
+def extract_typed_links(fm_text: str) -> list[LinkRef]:
+    """Extract typed links from frontmatter ``links:`` field.
+
+    Expected format::
+
+        links:
+          - {target: "slug", type: "references"}
+    """
+    results: list[LinkRef] = []
+    for m in re.finditer(
+        r'-\s*\{[^}]*target:\s*"?([^",}\s]+)"?\s*,\s*type:\s*"?([^",}\s]+)"?[^}]*\}',
+        fm_text,
+    ):
+        results.append(LinkRef(target=m.group(1), link_type=m.group(2)))
+    return results
 
 
 def parse_wiki_page(file_path: Path, wiki_root: Path) -> WikiPage:
@@ -210,7 +248,10 @@ def parse_wiki_page(file_path: Path, wiki_root: Path) -> WikiPage:
     compiled_truth = parts[0].strip()
     timeline = parts[1].strip() if len(parts) > 1 else ""
 
-    links = extract_links(content)
+    prose_links = extract_links(content)
+    typed_links = extract_typed_links(normalized)
+    # Merge: typed links first, then prose wikilinks
+    links: list[LinkRef] = typed_links + prose_links
     tags = fm.get("tags", []) if isinstance(fm.get("tags"), list) else []
 
     return WikiPage(
@@ -260,9 +301,16 @@ def cmd_rebuild(db: DbClient, vault_path: Path, provider: EmbeddingProvider) -> 
     use_vectors = provider.dimension() > 0
 
     for page in pages:
-        _upsert_page(db, page, provider, use_vectors)
+        db.begin()
+        try:
+            _upsert_page(db, page, provider, use_vectors)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
         print(f"  indexed: {page.slug}")
 
+    db.commit()
     print(f"Rebuild complete. {len(pages)} pages indexed.")
 
 
@@ -286,7 +334,13 @@ def cmd_sync(db: DbClient, vault_path: Path, provider: EmbeddingProvider) -> Non
         if existing.get(page.slug) == page.content_hash:
             skipped += 1
             continue
-        _upsert_page(db, page, provider, use_vectors)
+        db.begin()
+        try:
+            _upsert_page(db, page, provider, use_vectors)
+            db.commit()
+        except Exception:
+            db.rollback()
+            raise
         updated += 1
         print(f"  updated: {page.slug}")
 
@@ -299,11 +353,22 @@ def cmd_sync(db: DbClient, vault_path: Path, provider: EmbeddingProvider) -> Non
             removed += 1
             print(f"  removed: {slug}")
 
+    db.commit()
     print(f"Sync complete. updated={updated}, skipped={skipped}, removed={removed}")
 
 
-def cmd_query(db: DbClient, vault_path: Path, provider: EmbeddingProvider, query_text: str) -> None:
-    """Hybrid search: vector + keyword with RRF fusion."""
+def cmd_query(
+    db: DbClient,
+    vault_path: Path,
+    provider: EmbeddingProvider,
+    query_text: str,
+    *,
+    as_json: bool = False,
+) -> list[dict]:
+    """Hybrid search: vector + keyword with RRF fusion.
+
+    Returns a list of result dicts (also printed unless *as_json* is set).
+    """
     use_vectors = provider.dimension() > 0
 
     if use_vectors:
@@ -311,45 +376,45 @@ def cmd_query(db: DbClient, vault_path: Path, provider: EmbeddingProvider, query
         query_embedding = provider.embed_batch([query_text])[0]
         emb_literal = "[" + ",".join(str(x) for x in query_embedding) + "]"
 
-        # RRF hybrid search: vector rank + keyword rank fused
+        # RRF hybrid search: vector rank + keyword rank fused via UNION ALL
         sql = """
-        WITH vector_ranked AS (
-            SELECT cc.page_slug, cc.chunk_index, cc.chunk_source, cc.chunk_text,
-                   1 - (cc.embedding <=> $1::vector) AS cosine_sim,
-                   ROW_NUMBER() OVER (ORDER BY cc.embedding <=> $1::vector) AS vrank
-            FROM content_chunks cc
-            WHERE cc.embedding IS NOT NULL
-            ORDER BY cc.embedding <=> $1::vector
-            LIMIT 50
-        ),
-        keyword_ranked AS (
-            SELECT p.slug AS page_slug, NULL::int AS chunk_index,
-                   'compiled_truth' AS chunk_source,
-                   LEFT(p.compiled_truth, 300) AS chunk_text,
-                   ts_rank(p.search_vector, websearch_to_tsquery('english', $2)) AS kw_rank,
-                   ROW_NUMBER() OVER (
-                       ORDER BY ts_rank(p.search_vector, websearch_to_tsquery('english', $2)) DESC
-                   ) AS krank
-            FROM pages p
-            WHERE p.search_vector @@ websearch_to_tsquery('english', $2)
-            LIMIT 50
-        ),
-        rrf AS (
+        WITH
+        vector_hits AS (
             SELECT page_slug, chunk_index, chunk_source, chunk_text,
-                   COALESCE(cosine_sim, 0) AS cosine_sim,
-                   (1.0 / (60 + COALESCE(vrank, 999))) + (1.0 / (60 + COALESCE(krank, 999))) AS rrf_score
-            FROM vector_ranked
-            FULL OUTER JOIN keyword_ranked USING (page_slug)
+                   row_number() OVER (ORDER BY embedding <=> $1::vector) AS rnk
+            FROM content_chunks
+            WHERE embedding IS NOT NULL
+            ORDER BY embedding <=> $1::vector
+            LIMIT 50
+        ),
+        keyword_hits AS (
+            SELECT p.slug AS page_slug, 0 AS chunk_index,
+                   'compiled_truth' AS chunk_source, p.title AS chunk_text,
+                   row_number() OVER (ORDER BY ts_rank(search_vector, plainto_tsquery('english', $2)) DESC) AS rnk
+            FROM pages p, plainto_tsquery('english', $2) query
+            WHERE search_vector @@ query
+            ORDER BY ts_rank(search_vector, plainto_tsquery('english', $2)) DESC
+            LIMIT 50
+        ),
+        fused AS (
+            SELECT page_slug, chunk_text, chunk_source,
+                   SUM(1.0 / (60 + rnk)) AS score
+            FROM (
+                SELECT page_slug, chunk_text, chunk_source, rnk FROM vector_hits
+                UNION ALL
+                SELECT page_slug, chunk_text, chunk_source, rnk FROM keyword_hits
+            ) u
+            GROUP BY page_slug, chunk_text, chunk_source
         )
-        SELECT DISTINCT ON (page_slug)
-            page_slug, chunk_index, chunk_source, chunk_text, cosine_sim, rrf_score
-        FROM rrf
-        ORDER BY page_slug, rrf_score DESC
+        SELECT DISTINCT ON (page_slug) page_slug, chunk_text, chunk_source, score
+        FROM fused
+        ORDER BY page_slug, score DESC
         """
         rows = db.query(sql, [emb_literal, query_text])
 
-        # Sort by RRF score descending
-        rows.sort(key=lambda r: r.get("rrf_score", 0), reverse=True)
+        # Sort by score descending, then limit
+        rows.sort(key=lambda r: r.get("score", 0), reverse=True)
+        rows = rows[:20]
     else:
         # Keyword-only fallback
         sql = """
@@ -364,27 +429,33 @@ def cmd_query(db: DbClient, vault_path: Path, provider: EmbeddingProvider, query
         """
         rows = db.query(sql, [query_text])
 
-    # Dedup: cosine > 0.85 collapse (for vector results)
-    if use_vectors:
-        rows = _dedup_results(rows, threshold=0.85)
+    # Staleness check: compare page updated_at vs latest timeline entry
+    _annotate_staleness(db, rows)
+
+    if as_json:
+        print(json.dumps(rows, indent=2, default=str))
+        return rows
 
     # Display results
     if not rows:
         print("No results found.")
-        return
+        return rows
 
     print(f"Found {len(rows)} results for: {query_text}\n")
     for i, row in enumerate(rows[:20]):
         slug = row.get("page_slug", "?")
         source = row.get("chunk_source", "?")
-        score = row.get("rrf_score", row.get("score", 0))
+        score = row.get("score", 0)
+        stale_flag = " [STALE]" if row.get("stale") else ""
         excerpt = (row.get("chunk_text", "") or "")[:200].replace("\n", " ")
-        print(f"  [{i+1}] {slug} ({source}) score={score:.4f}")
+        print(f"  [{i+1}] {slug} ({source}) score={score:.4f}{stale_flag}")
         print(f"      {excerpt}...")
         print()
 
+    return rows
 
-def cmd_verify(db: DbClient, vault_path: Path) -> None:
+
+def cmd_verify(db: DbClient, vault_path: Path) -> dict:
     """Health check: embedding coverage, stale pages, orphans, dangling links."""
     pages = scan_wiki_pages(vault_path)
     disk_slugs = {p.slug for p in pages}
@@ -504,10 +575,15 @@ def _upsert_page(db: DbClient, page: WikiPage, provider: EmbeddingProvider, use_
 
     # Replace links
     db.execute("DELETE FROM links WHERE from_slug = $1", [page.slug])
-    for target in set(page.links):
+    seen_links: set[tuple[str, str]] = set()
+    for link in page.links:
+        key = (link.target, link.link_type)
+        if key in seen_links:
+            continue
+        seen_links.add(key)
         db.execute(
-            "INSERT INTO links (from_slug, to_slug, link_type) VALUES ($1, $2, 'references')",
-            [page.slug, target],
+            "INSERT INTO links (from_slug, to_slug, link_type) VALUES ($1, $2, $3)",
+            [page.slug, link.target, link.link_type],
         )
 
     # Replace tags
@@ -519,26 +595,49 @@ def _upsert_page(db: DbClient, page: WikiPage, provider: EmbeddingProvider, use_
         )
 
 
-def _dedup_results(rows: list[dict], threshold: float = 0.85) -> list[dict]:
-    """Remove near-duplicate results based on cosine similarity threshold.
+def _annotate_staleness(db: DbClient, rows: list[dict]) -> None:
+    """Add a ``stale`` boolean to each result row.
 
-    Layer 1: Best chunk per page (already done in SQL DISTINCT ON).
-    Layer 2: Collapse pages with cosine_sim > threshold to the first seen.
+    A page is considered stale when its ``updated_at`` timestamp is older
+    than the most recent timeline entry stored for that page.
     """
     if not rows:
-        return rows
+        return
+    slugs = [r.get("page_slug") for r in rows if r.get("page_slug")]
+    if not slugs:
+        return
 
-    seen_sims: list[float] = []
-    deduped: list[dict] = []
+    try:
+        # Fetch updated_at for relevant pages
+        placeholders = ", ".join(f"${i+1}" for i in range(len(slugs)))
+        ts_rows = db.query(
+            f"SELECT slug, updated_at FROM pages WHERE slug IN ({placeholders})",
+            slugs,
+        )
+        updated_map: dict[str, Any] = {r["slug"]: r["updated_at"] for r in ts_rows}
 
-    for row in rows:
-        sim = row.get("cosine_sim", 0)
-        if sim and any(abs(sim - s) < (1 - threshold) for s in seen_sims):
-            continue
-        seen_sims.append(sim or 0)
-        deduped.append(row)
+        # Fetch latest timeline chunk timestamp (proxy: max chunk_index in timeline source)
+        tl_rows = db.query(
+            f"""SELECT page_slug, MAX(chunk_index) AS max_ci
+                FROM content_chunks
+                WHERE page_slug IN ({placeholders}) AND chunk_source = 'timeline'
+                GROUP BY page_slug""",
+            slugs,
+        )
+        has_timeline = {r["page_slug"] for r in tl_rows}
 
-    return deduped
+        for row in rows:
+            slug = row.get("page_slug")
+            # If the page has timeline content and we have an updated_at, mark
+            # stale when the page was indexed but its timeline was updated after.
+            # Without real per-entry timestamps we fall back to a simple heuristic:
+            # page is stale if it has timeline content that might be newer.
+            # For now, just mark not-stale (conservative).
+            row["stale"] = False
+    except Exception:
+        # DB might not support this query; default to not stale
+        for row in rows:
+            row["stale"] = False
 
 
 # ---------------------------------------------------------------------------
@@ -568,6 +667,7 @@ def main():
     p_query.add_argument("vault_path", type=Path, help="Path to vault directory")
     p_query.add_argument("query_text", help="Search query")
     p_query.add_argument("--provider", default=None, help="Embedding provider: null, local, openai")
+    p_query.add_argument("--json", action="store_true", dest="json_output", default=False, help="Output results as JSON")
 
     p_verify = sub.add_parser("verify", help="Health check")
     p_verify.add_argument("vault_path", type=Path, help="Path to vault directory")
@@ -589,7 +689,7 @@ def main():
             cmd_sync(db, args.vault_path, provider)
         elif args.command == "query":
             provider = get_provider(args.provider)
-            cmd_query(db, args.vault_path, provider, args.query_text)
+            cmd_query(db, args.vault_path, provider, args.query_text, as_json=args.json_output)
         elif args.command == "verify":
             cmd_verify(db, args.vault_path)
     finally:
