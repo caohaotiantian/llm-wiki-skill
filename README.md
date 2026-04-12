@@ -60,6 +60,14 @@ my-wiki/
 - **Optional Docling integration** — Extract text from PDFs, DOCX, PPTX, XLSX, HTML, images, and more
 - **Periodic scanning** — Detect new, failed, or low-quality extractions; retry automatically
 - **Link validation** — Detects alias mismatches (`[[alias]]` that should be `[[filename|alias]]`) and missing link targets. Auto-fix rewrites aliases to correct pipe syntax, preserving display text and heading anchors. Runs as post-ingest validation and during lint.
+- **Compiled-truth + timeline page model** — Each page separates rewritable synthesis (compiled truth) from an append-only evidence trail (timeline), preventing knowledge drift over time
+- **Typed links** — Frontmatter `links:` with semantic types (`references`, `contradicts`, `depends_on`, `supersedes`, `authored_by`, `works_at`, `mentions`) for graph queries
+- **Hybrid retrieval** — Optional PGlite/Postgres index with vector + keyword search fused via reciprocal rank fusion (RRF). Configurable embedding providers (local, OpenAI-compatible, or any remote API)
+- **Graph analysis** — NetworkX-powered graph operations: neighbors, shortest path, PageRank centrality, community detection, orphan finding. Cytoscape.js HTML export for interactive visualization
+- **Attribute filtering** — Query pages by frontmatter attributes: `--where "type=concept tag=strategy confidence>=0.7"`
+- **Multi-query expansion** — Generates query paraphrases via Anthropic or OpenAI-compatible chat APIs for better retrieval recall
+- **Pluggable storage backend** — `StorageBackend` protocol with file-first (default) and database-first implementations
+- **Provider-agnostic API** — Embeddings and expansion work with any OpenAI-compatible or Anthropic-compatible endpoint via environment variables (`EMBEDDING_BASE_URL`, `EXPANSION_BASE_URL`, etc.)
 
 ## Installation
 
@@ -88,6 +96,12 @@ Then ask Claude: *"Set up a knowledge base wiki in ./my-wiki and ingest these do
 - [`docling`](https://github.com/docling-project/docling) — for high-quality document extraction (PDF, DOCX, PPTX, XLSX, HTML, images, and more). Install with `pip install docling pip-system-certs`. Without it, the agent can still read files directly using its built-in capabilities.
 - Obsidian — for graph view, search, and Dataview queries. The skill works without it (it's just markdown files), but Obsidian makes the wiki much more useful.
 
+**Optional (for advanced features):**
+- Node.js 18+ — for PGlite embedded Postgres index (hybrid retrieval)
+- `sentence-transformers` — for local CPU-based embeddings (no API key needed)
+- `networkx` — for graph analysis (centrality, communities, paths)
+- Any OpenAI-compatible or Anthropic-compatible API — for remote embeddings and multi-query expansion. Configure via `EMBEDDING_BASE_URL` / `EXPANSION_BASE_URL` environment variables.
+
 ## Project Structure
 
 ```
@@ -101,7 +115,15 @@ llm-wiki-skill/
 │       ├── extract.py       # Document extraction (optional Docling integration)
 │       ├── scan.py          # Scan raw/ for new, failed, or low-quality extractions
 │       ├── diff_sources.py  # Structured diff for incremental re-ingestion
-│       └── lint_links.py    # Wikilink validator (alias mismatches, missing pages)
+│       ├── lint_links.py    # Wikilink validator + stale/unbalanced checks + referenced-by
+│       ├── score_pages.py   # Composite page scoring
+│       ├── chunking.py      # Recursive text chunking for index
+│       ├── embeddings.py    # Provider-agnostic embedding interface
+│       ├── index.py         # Hybrid search index (PGlite/Postgres)
+│       ├── graph.py         # Graph analysis (NetworkX + Cytoscape export)
+│       ├── query_filter.py  # Attribute-based page filtering
+│       ├── expansion.py     # Multi-query expansion (Anthropic/OpenAI)
+│       └── storage.py       # Pluggable storage backend protocol
 ├── INSTALL.md               # Installation instructions for all agent platforms
 ├── LICENSE                  # MIT
 └── README.md                # This file
@@ -123,8 +145,12 @@ Karpathy's [original gist](https://gist.github.com/karpathy/442a6bf555914893e989
 | Provenance markers | Not covered | Inline footnotes: `^[extracted]`, `^[inferred]`, `^[ambiguous]` |
 | Obsidian integration | Tips only | Full reference: URI scheme, CLI commands, vault config, plugins |
 | Link validation | Not covered | Detects alias mismatches and missing pages; auto-fix with `--fix` |
+| Hybrid retrieval | Not covered | Vector + keyword search with RRF fusion via PGlite/Postgres |
+| Graph analysis | Not covered | PageRank, communities, shortest path, interactive visualization |
+| Knowledge model | Flat pages | Compiled-truth + timeline separation with staleness detection |
+| Typed links | Not covered | Semantic link types in frontmatter for graph queries |
 
-The gist also suggests features this project does not yet cover: dedicated search tooling (e.g. [qmd](https://github.com/tobi/qmd)) for large wikis, and varied output formats (Marp slide decks, matplotlib charts).
+The gist also suggests features this project does not yet cover: varied output formats (Marp slide decks, matplotlib charts).
 
 ## Credits
 

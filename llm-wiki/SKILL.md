@@ -782,8 +782,16 @@ The index requires either:
 
 Embeddings require one of:
 - **Local** (default): `pip install sentence-transformers` — 384-dim, CPU, no API key
-- **OpenAI**: Set `OPENAI_API_KEY` — 1536-dim, better recall, ~$0.0001/page
+- **Remote** (any OpenAI-compatible API): Set `EMBEDDING_API_KEY` (or `OPENAI_API_KEY`) — works with OpenAI, Ollama, vLLM, Together, Groq, Azure OpenAI, DeepSeek, etc.
 - **None**: Keyword-only search (no embedding dependency)
+
+Configure remote embeddings via environment variables:
+```bash
+EMBEDDING_API_KEY=sk-...              # API key (falls back to OPENAI_API_KEY)
+EMBEDDING_BASE_URL=http://host:port/v1  # Custom endpoint (default: OpenAI)
+EMBEDDING_MODEL=text-embedding-3-small  # Model name
+EMBEDDING_DIMENSION=1536              # Override auto-detected dimension
+```
 
 ### Commands
 
@@ -843,9 +851,9 @@ Graph analysis works from typed links in frontmatter (authoritative) with wikili
 - `scripts/score_pages.py` — Computes composite page scores from query frequency, access count, cross-reference density, manual weight, and priority tags. Writes `computed_score` to page frontmatter. Supports `--pages` for incremental scoring and `--json` for structured output.
 - `scripts/lint_links.py` — Wikilink validator: scans for alias mismatches (`[[alias]]` that should be `[[filename|alias]]`) and missing link targets. Supports `--fix` for auto-repair, `--stale` / `--unbalanced` for compiled-truth health, `--json` for structured output.
 - `scripts/chunking.py` — Recursive text chunking (300 words, 50-word overlap) with page-aware mode that separates compiled truth from timeline.
-- `scripts/embeddings.py` — Embedding provider interface with null/local/OpenAI implementations. Auto-detects available provider.
+- `scripts/embeddings.py` — Embedding provider interface with null/local/remote implementations. Remote works with any OpenAI-compatible API. Configurable via `EMBEDDING_*` env vars.
 - `scripts/index.py` — Index management: rebuild, sync, query (hybrid RRF search), verify (health check).
 - `scripts/graph.py` — Graph analysis with NetworkX: neighbors, shortest path, centrality, communities, orphans. Supports Cytoscape.js HTML export.
 - `scripts/query_filter.py` — Attribute-based filtering: `--where "type=concept tag=strategy confidence>=0.7"`.
-- `scripts/expansion.py` — Multi-query expansion via Anthropic API for better retrieval recall. Gated on `ANTHROPIC_API_KEY`.
+- `scripts/expansion.py` — Multi-query expansion for better retrieval recall. Supports both Anthropic-style and OpenAI-style chat APIs. Configurable via `EXPANSION_*` env vars (falls back to `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`).
 - `scripts/storage.py` — Pluggable StorageBackend protocol with FileVaultBackend (file-first, default) and DatabaseBackend (DB-first, opt-in).
