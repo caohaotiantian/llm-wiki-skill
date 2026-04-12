@@ -115,7 +115,7 @@ def _parse_title_from_frontmatter(fm: str) -> str | None:
 
 
 def _scan_wikilinks(file_path: str) -> list[str]:
-    """Extract wikilink targets from prose (outside frontmatter)."""
+    """Extract wikilink targets from prose (outside frontmatter, code blocks, inline code)."""
     try:
         content = Path(file_path).read_text(encoding="utf-8", errors="replace")
     except OSError:
@@ -124,8 +124,37 @@ def _scan_wikilinks(file_path: str) -> list[str]:
     content = content.replace("\r\n", "\n").replace("\r", "\n")
     # Strip frontmatter
     m = _FRONTMATTER_RE.match(content)
-    body = content[m.end() :] if m else content
-    return _WIKILINK_RE.findall(body)
+    body = content[m.end():] if m else content
+
+    # Strip referenced-by blocks
+    body = re.sub(
+        r"<!-- referenced-by:start -->.*?<!-- referenced-by:end -->",
+        "", body, flags=re.DOTALL,
+    )
+
+    targets = []
+    code_fence = ""
+    for line in body.split("\n"):
+        stripped = line.strip()
+        # Track fenced code blocks
+        if not code_fence:
+            fence_match = re.match(r"^(`{3,}|~{3,})", stripped)
+            if fence_match:
+                code_fence = fence_match.group(1)
+                continue
+        else:
+            fence_char = code_fence[0]
+            if re.match(r"^" + re.escape(fence_char) + r"{" + str(len(code_fence)) + r",}\s*$", stripped):
+                code_fence = ""
+            continue
+        # Strip inline code spans before scanning
+        scannable = re.sub(r"`[^`]+`", "", line)
+        for raw in _WIKILINK_RE.findall(scannable):
+            # Strip pipe syntax and heading anchors
+            target = raw.split("|")[0].split("#")[0].strip()
+            if target:
+                targets.append(target)
+    return targets
 
 
 def _slug_from_path(file_path: str) -> str:

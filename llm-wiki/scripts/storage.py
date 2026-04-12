@@ -251,8 +251,9 @@ class FileVaultBackend:
         wiki_dir = self._vault_path / "wiki"
         wiki_dir.mkdir(parents=True, exist_ok=True)
         file_path = wiki_dir / f"{page.slug}.md"
-        file_path.write_text(page.to_markdown(), encoding="utf-8")
-        page.content_hash = _compute_content_hash(page.to_markdown())
+        md = page.to_markdown()
+        file_path.write_text(md, encoding="utf-8")
+        page.content_hash = _compute_content_hash(md)
         self._pages[page.slug] = page
 
     def delete_page(self, slug: str) -> None:

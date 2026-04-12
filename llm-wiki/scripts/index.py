@@ -278,6 +278,8 @@ def scan_wiki_pages(vault_path: Path) -> list[WikiPage]:
 
     pages = []
     for md_file in sorted(wiki_dir.rglob("*.md")):
+        if md_file.name.endswith(".snapshot.md"):
+            continue
         try:
             page = parse_wiki_page(md_file, wiki_dir)
             pages.append(page)
@@ -393,10 +395,10 @@ def cmd_query(
         keyword_hits AS (
             SELECT p.slug AS page_slug, 0 AS chunk_index,
                    'compiled_truth' AS chunk_source, p.title AS chunk_text,
-                   row_number() OVER (ORDER BY ts_rank(search_vector, plainto_tsquery('english', $2)) DESC) AS rnk
-            FROM pages p, plainto_tsquery('english', $2) query
+                   row_number() OVER (ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $2)) DESC) AS rnk
+            FROM pages p, websearch_to_tsquery('english', $2) query
             WHERE search_vector @@ query
-            ORDER BY ts_rank(search_vector, plainto_tsquery('english', $2)) DESC
+            ORDER BY ts_rank(search_vector, websearch_to_tsquery('english', $2)) DESC
             LIMIT 50
         ),
         fused AS (
