@@ -668,8 +668,9 @@ def inject_referenced_by(vault_path) -> int:
             r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content_norm, re.DOTALL
         )
         body = content_norm[fm_match.end():] if fm_match else content_norm
-        for target in WIKILINK_RE.findall(body):
-            if target == slug:
+        for raw_target in WIKILINK_RE.findall(body):
+            target = extract_link_target(raw_target)
+            if not target or target == slug:
                 continue
             # Don't duplicate if already covered by a typed link
             existing = reverse_map.get(target, [])

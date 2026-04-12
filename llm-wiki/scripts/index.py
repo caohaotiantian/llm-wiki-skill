@@ -310,7 +310,6 @@ def cmd_rebuild(db: DbClient, vault_path: Path, provider: EmbeddingProvider) -> 
             raise
         print(f"  indexed: {page.slug}")
 
-    db.commit()
     print(f"Rebuild complete. {len(pages)} pages indexed.")
 
 
@@ -347,13 +346,17 @@ def cmd_sync(db: DbClient, vault_path: Path, provider: EmbeddingProvider) -> Non
     # Remove pages no longer on disk
     disk_slugs = {p.slug for p in pages}
     removed = 0
-    for slug in existing:
-        if slug not in disk_slugs:
-            db.execute("DELETE FROM pages WHERE slug = $1", [slug])
-            removed += 1
-            print(f"  removed: {slug}")
-
-    db.commit()
+    db.begin()
+    try:
+        for slug in existing:
+            if slug not in disk_slugs:
+                db.execute("DELETE FROM pages WHERE slug = $1", [slug])
+                removed += 1
+                print(f"  removed: {slug}")
+        db.commit()
+    except Exception:
+        db.rollback()
+        raise
     print(f"Sync complete. updated={updated}, skipped={skipped}, removed={removed}")
 
 

@@ -79,7 +79,7 @@ async function handleRpc(body) {
       if (!sql) throw new Error("Missing 'sql' in params");
       // PGlite's exec() doesn't support parameterized queries — use query()
       const result = await db.query(sql, sqlArgs || []);
-      const affected = result.rows.length;
+      const affected = result.affectedRows ?? result.rows?.length ?? 0;
       return { affected };
     }
 
