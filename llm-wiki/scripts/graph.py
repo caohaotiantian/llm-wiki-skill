@@ -500,31 +500,34 @@ def _output(data: Any, fmt: str, table_keys: list[str] | None = None) -> str:
 # ---------------------------------------------------------------------------
 
 def main(argv: list[str] | None = None) -> None:
+    # Common flags shared by all subcommands
+    common = argparse.ArgumentParser(add_help=False)
+    common.add_argument("--format", choices=["markdown", "json"], default="markdown")
+    common.add_argument("--export", choices=["html"], default=None)
+    common.add_argument("-o", "--output", default=None, help="Output file path")
+
     parser = argparse.ArgumentParser(description="Wiki graph analysis")
     parser.add_argument("vault", help="Path to the vault root")
-    parser.add_argument("--format", choices=["markdown", "json"], default="markdown")
-    parser.add_argument("--export", choices=["html"], default=None)
-    parser.add_argument("-o", "--output", default=None, help="Output file path")
 
     sub = parser.add_subparsers(dest="command")
 
-    p_nb = sub.add_parser("neighbors", help="Pages within N hops")
+    p_nb = sub.add_parser("neighbors", help="Pages within N hops", parents=[common])
     p_nb.add_argument("slug")
     p_nb.add_argument("--depth", type=int, default=1)
 
-    p_pa = sub.add_parser("path", help="Shortest path between two pages")
+    p_pa = sub.add_parser("path", help="Shortest path between two pages", parents=[common])
     p_pa.add_argument("source")
     p_pa.add_argument("target")
 
-    p_ce = sub.add_parser("centrality", help="Rank pages by importance")
+    p_ce = sub.add_parser("centrality", help="Rank pages by importance", parents=[common])
     p_ce.add_argument("--metric", choices=["pagerank", "degree", "betweenness", "eigenvector"], default="pagerank")
     p_ce.add_argument("--limit", type=int, default=20)
 
-    p_cm = sub.add_parser("communities", help="Detect topical clusters")
+    p_cm = sub.add_parser("communities", help="Detect topical clusters", parents=[common])
     p_cm.add_argument("--algorithm", choices=["louvain", "label_propagation"], default="louvain")
 
-    sub.add_parser("orphans", help="Pages with no links")
-    sub.add_parser("stats", help="Graph statistics")
+    sub.add_parser("orphans", help="Pages with no links", parents=[common])
+    sub.add_parser("stats", help="Graph statistics", parents=[common])
 
     args = parser.parse_args(argv)
 

@@ -186,6 +186,10 @@ def _parse_page_from_markdown(slug: str, content: str) -> Page:
     compiled_truth = parts[0].strip()
     timeline = parts[1].strip() if len(parts) > 1 else ""
 
+    # Strip leading heading if it matches the title (avoid duplicate on round-trip)
+    if title and compiled_truth.startswith(f"# {title}"):
+        compiled_truth = compiled_truth[len(f"# {title}"):].strip()
+
     # Parse typed links from frontmatter and override whatever the simple
     # parser produced (it cannot handle YAML list-of-dicts).
     typed_links = _parse_typed_links(content)
