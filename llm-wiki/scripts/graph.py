@@ -494,8 +494,10 @@ def main(argv: list[str] | None = None) -> None:
 
     g = build_graph(args.vault)
 
-    # Handle HTML export
+    # Handle HTML export (undocumented — kept for backward compat)
     if args.export == "html":
+        if args.format != "markdown":
+            print("Warning: --format is ignored when --export html is set", file=sys.stderr)
         html = export_html(g)
         if args.output:
             Path(args.output).write_text(html, encoding="utf-8")
