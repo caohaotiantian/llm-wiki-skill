@@ -33,12 +33,12 @@ When the user asks to set up a new wiki:
 
 2. **Check dependencies** — verify optional packages:
    ```python
-   python3 -c "import docling; import pip_system_certs; print('OK')"
+   python3 -c "import yaml; import docling; import pip_system_certs; print('OK')"
    ```
-   If imports fail, inform the user. These are optional — the skill works without them. Ask before installing into a venv:
+   `pyyaml` is required (used by all scripts for frontmatter parsing). `docling` and `pip-system-certs` are optional — the skill works without them. Ask before installing into a venv:
    ```bash
    python3 -m venv <vault-path>/.venv
-   <vault-path>/.venv/bin/pip install docling pip-system-certs
+   <vault-path>/.venv/bin/pip install pyyaml docling pip-system-certs
    ```
 
 3. **Create vault structure:**
