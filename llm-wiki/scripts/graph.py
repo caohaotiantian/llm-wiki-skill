@@ -28,103 +28,19 @@ from typing import Any
 
 import networkx as nx
 
-
-# ---------------------------------------------------------------------------
-# Parsing helpers (self-contained — no imports from lint_links.py)
-# ---------------------------------------------------------------------------
-
-_FRONTMATTER_RE = re.compile(
-    r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", re.DOTALL
-)
-
-_TYPED_LINK_RE = re.compile(
-    r"""\{\s*target\s*:\s*"([^"]+)"\s*,\s*type\s*:\s*"([^"]+)"\s*\}"""
-)
+from frontmatter import parse as _parse_fm, parse_typed_links as _parse_typed_links_fm, parse_tags as _parse_tags_fm
 
 _WIKILINK_RE = re.compile(r"\[\[([^\]|]+)(?:\|[^\]]+)?\]\]")
 
 
-def _extract_frontmatter(content: str) -> str | None:
-    """Return the raw YAML frontmatter block, or None."""
-    content = content.replace("\r\n", "\n").replace("\r", "\n")
-    m = _FRONTMATTER_RE.match(content)
-    return m.group(1) if m else None
+def _scan_wikilinks(content: str) -> list[str]:
+    """Extract wikilink targets from prose (outside frontmatter, code blocks, inline code).
 
-
-def _frontmatter_field(fm: str, field: str) -> str | None:
-    """Return the raw value string for a simple top-level YAML key."""
-    for line in fm.splitlines():
-        stripped = line.strip()
-        if stripped.startswith(f"{field}:"):
-            return stripped[len(field) + 1 :].strip()
-    return None
-
-
-def _parse_typed_links_from_file(file_path: str) -> list[dict]:
-    """Parse typed links from a markdown file's YAML frontmatter.
-
-    Expects ``links: [{target: "slug", type: "type"}, ...]`` inside the
-    frontmatter block.  Returns a list of ``{"target": ..., "type": ...}``
-    dicts.
+    Accepts page content as a string (caller provides it).
     """
-    try:
-        content = Path(file_path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-
-    fm = _extract_frontmatter(content)
-    if fm is None:
-        return []
-
-    results: list[dict] = []
-    in_links = False
-    for line in fm.splitlines():
-        stripped = line.strip()
-        if stripped.startswith("links:"):
-            in_links = True
-            # inline list on same line?
-            for m in _TYPED_LINK_RE.finditer(stripped):
-                results.append({"target": m.group(1), "type": m.group(2)})
-            continue
-        if in_links:
-            # End of links block when we hit a new top-level key
-            if re.match(r"^[a-zA-Z_]", line) and not line.startswith(" "):
-                break
-            for m in _TYPED_LINK_RE.finditer(stripped):
-                results.append({"target": m.group(1), "type": m.group(2)})
-    return results
-
-
-def _parse_tags_from_frontmatter(fm: str) -> list[str]:
-    """Extract tags list from frontmatter."""
-    val = _frontmatter_field(fm, "tags")
-    if not val:
-        return []
-    # inline list: [a, b, c]
-    if val.startswith("["):
-        inner = val.strip("[]")
-        return [t.strip().strip("\"'") for t in inner.split(",") if t.strip()]
-    return []
-
-
-def _parse_title_from_frontmatter(fm: str) -> str | None:
-    val = _frontmatter_field(fm, "title")
-    if val:
-        return val.strip("\"'")
-    return None
-
-
-def _scan_wikilinks(file_path: str) -> list[str]:
-    """Extract wikilink targets from prose (outside frontmatter, code blocks, inline code)."""
-    try:
-        content = Path(file_path).read_text(encoding="utf-8", errors="replace")
-    except OSError:
-        return []
-
     content = content.replace("\r\n", "\n").replace("\r", "\n")
     # Strip frontmatter
-    m = _FRONTMATTER_RE.match(content)
-    body = content[m.end():] if m else content
+    _, body = _parse_fm(content)
 
     # Strip referenced-by blocks
     body = re.sub(
@@ -182,23 +98,26 @@ def build_graph(vault_path: str | Path) -> nx.DiGraph:
     md_files = sorted(
         f for f in wiki_dir.rglob("*.md") if not f.name.endswith(".snapshot.md")
     )
+
+    contents: dict[str, str] = {}
     # First pass: register nodes
     for fp in md_files:
         slug = _slug_from_path(str(fp))
         content = fp.read_text(encoding="utf-8", errors="replace")
-        fm = _extract_frontmatter(content)
-        tags = _parse_tags_from_frontmatter(fm) if fm else []
-        title = (_parse_title_from_frontmatter(fm) if fm else None) or slug
+        contents[slug] = content
+        fm, _ = _parse_fm(content)
+        tags = _parse_tags_fm(fm)
+        title = fm.get("title") or slug
         node_type = tags[0] if tags else "default"
         g.add_node(slug, title=title, tags=tags, node_type=node_type)
 
     # Second pass: edges from typed links
     for fp in md_files:
         slug = _slug_from_path(str(fp))
-        typed = _parse_typed_links_from_file(str(fp))
+        fm, _ = _parse_fm(contents[slug])
+        typed = _parse_typed_links_fm(fm)
         for link in typed:
             target = link["target"]
-            # Ensure target node exists
             if target not in g:
                 g.add_node(target, title=target, tags=[], node_type="default")
             g.add_edge(slug, target, link_type=link["type"])
@@ -206,7 +125,7 @@ def build_graph(vault_path: str | Path) -> nx.DiGraph:
     # Third pass: wikilinks as fallback edges
     for fp in md_files:
         slug = _slug_from_path(str(fp))
-        wikilinks = _scan_wikilinks(str(fp))
+        wikilinks = _scan_wikilinks(contents[slug])
         for target in wikilinks:
             if target == slug:
                 continue
