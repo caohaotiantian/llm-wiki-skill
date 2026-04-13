@@ -26,6 +26,7 @@ from typing import Any
 
 from chunking import chunk_page
 from embeddings import get_provider, EmbeddingProvider
+from frontmatter import parse as parse_frontmatter, parse_typed_links as _parse_typed_links_fm
 
 
 # ---------------------------------------------------------------------------
@@ -171,34 +172,16 @@ def compute_content_hash(content: str) -> str:
     return hashlib.sha256(content.encode("utf-8")).hexdigest()
 
 
-def parse_frontmatter(content: str) -> tuple[dict, str]:
-    """Extract YAML frontmatter and body from content."""
-    fm_match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n)", content, re.DOTALL)
-    if not fm_match:
-        return {}, content
 
-    fm_text = fm_match.group(1)
-    body = content[fm_match.end():]
 
-    # Simple YAML-like parser for basic key: value pairs
-    fm: dict[str, Any] = {}
-    for line in fm_text.split("\n"):
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if ":" in line:
-            key, _, value = line.partition(":")
-            key = key.strip()
-            value = value.strip()
-            # Handle YAML lists like [tag1, tag2]
-            if value.startswith("[") and value.endswith("]"):
-                items = [item.strip().strip("'\"") for item in value[1:-1].split(",")]
-                fm[key] = [i for i in items if i]
-            elif value.lower() in ("true", "false"):
-                fm[key] = value.lower() == "true"
-            else:
-                fm[key] = value.strip("'\"")
-    return fm, body
+def extract_typed_links(fm_text: str) -> list[LinkRef]:
+    """Extract typed links from frontmatter text (backward-compat wrapper).
+
+    Wraps the shared frontmatter parser for callers that pass raw YAML text.
+    """
+    content = f"---\n{fm_text}\n---\n"
+    fm, _ = parse_frontmatter(content)
+    return [LinkRef(target=tl["target"], link_type=tl["type"]) for tl in _parse_typed_links_fm(fm)]
 
 
 def extract_links(content: str) -> list[LinkRef]:
@@ -206,21 +189,6 @@ def extract_links(content: str) -> list[LinkRef]:
     return [LinkRef(target=m) for m in re.findall(r"\[\[([^\]|]+?)(?:\|[^\]]+?)?\]\]", content)]
 
 
-def extract_typed_links(fm_text: str) -> list[LinkRef]:
-    """Extract typed links from frontmatter ``links:`` field.
-
-    Expected format::
-
-        links:
-          - {target: "slug", type: "references"}
-    """
-    results: list[LinkRef] = []
-    for m in re.finditer(
-        r'-\s*\{[^}]*target:\s*"?([^",}\s]+)"?\s*,\s*type:\s*"?([^",}\s]+)"?[^}]*\}',
-        fm_text,
-    ):
-        results.append(LinkRef(target=m.group(1), link_type=m.group(2)))
-    return results
 
 
 def parse_wiki_page(file_path: Path, wiki_root: Path) -> WikiPage:
@@ -249,7 +217,8 @@ def parse_wiki_page(file_path: Path, wiki_root: Path) -> WikiPage:
     timeline = parts[1].strip() if len(parts) > 1 else ""
 
     prose_links = extract_links(content)
-    typed_links = extract_typed_links(normalized)
+    typed_links_raw = _parse_typed_links_fm(fm)
+    typed_links = [LinkRef(target=tl["target"], link_type=tl["type"]) for tl in typed_links_raw]
     # Merge: typed links first, then prose wikilinks
     links: list[LinkRef] = typed_links + prose_links
     tags = fm.get("tags", []) if isinstance(fm.get("tags"), list) else []
