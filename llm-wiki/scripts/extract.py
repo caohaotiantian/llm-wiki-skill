@@ -20,13 +20,18 @@ from frontmatter import atomic_write
 
 def extract_with_docling(input_path: str, ocr: bool = True) -> str:
     """Extract text using the docling library with optimized settings."""
-    from docling.document_converter import DocumentConverter, PdfFormatOption
-    from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import (
-        PdfPipelineOptions,
-        TableStructureOptions,
-        TableFormerMode,
-    )
+    try:
+        from docling.document_converter import DocumentConverter, PdfFormatOption
+        from docling.datamodel.base_models import InputFormat
+        from docling.datamodel.pipeline_options import (
+            PdfPipelineOptions,
+            TableStructureOptions,
+            TableFormerMode,
+        )
+    except ImportError:
+        raise ImportError(
+            "docling is required for this file type. Install: pip install docling pip-system-certs"
+        )
 
     ext = os.path.splitext(input_path)[1].lower()
 

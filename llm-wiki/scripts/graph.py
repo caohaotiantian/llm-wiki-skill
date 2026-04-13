@@ -26,7 +26,10 @@ import sys
 from pathlib import Path
 from typing import Any
 
-import networkx as nx
+try:
+    import networkx as nx
+except ImportError:
+    nx = None
 
 from frontmatter import parse as _parse_fm, parse_typed_links as _parse_typed_links_fm, parse_tags as _parse_tags_fm
 
@@ -88,6 +91,9 @@ def build_graph(vault_path: str | Path) -> nx.DiGraph:
     Nodes carry ``title``, ``tags``, ``node_type`` attributes.
     Edges carry a ``link_type`` attribute.
     """
+    if nx is None:
+        print("Error: networkx is required for graph analysis. Install: pip install networkx", file=sys.stderr)
+        sys.exit(1)
     vault_path = Path(vault_path)
     wiki_dir = vault_path / "wiki"
     g = nx.DiGraph()
@@ -149,6 +155,7 @@ def find_neighbors(
     Each result is ``{"slug": ..., "distance": ..., "link_type": ...}``.
     """
     if slug not in g:
+        print(f"Warning: slug '{slug}' not found in graph", file=sys.stderr)
         return []
     undirected = g.to_undirected(as_view=True)
     lengths = nx.single_source_shortest_path_length(undirected, slug, cutoff=depth)
@@ -175,6 +182,8 @@ def find_shortest_path(
     ``None`` if no path exists.
     """
     if source not in g or target not in g:
+        missing = source if source not in g else target
+        print(f"Warning: '{missing}' not found in graph", file=sys.stderr)
         return None
     try:
         nodes = nx.shortest_path(g, source, target)

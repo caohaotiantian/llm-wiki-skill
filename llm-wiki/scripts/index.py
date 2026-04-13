@@ -276,8 +276,9 @@ def cmd_rebuild(db: DbClient, vault_path: Path, provider: EmbeddingProvider) -> 
         try:
             _upsert_page(db, page, provider, use_vectors)
             db.commit()
-        except Exception:
+        except Exception as e:
             db.rollback()
+            print(f"Error indexing page: {e}", file=sys.stderr)
             raise
         print(f"  indexed: {page.slug}")
 
@@ -294,7 +295,7 @@ def cmd_sync(db: DbClient, vault_path: Path, provider: EmbeddingProvider) -> Non
         rows = db.query("SELECT slug, content_hash FROM pages")
         existing = {r["slug"]: r["content_hash"] for r in rows}
     except Exception:
-        pass  # Table might not exist yet; rebuild will handle it
+        pass  # Table may not exist on first sync; rebuild will create it
 
     use_vectors = provider.dimension() > 0
     updated = 0
@@ -608,8 +609,8 @@ def _annotate_staleness(db: DbClient, rows: list[dict]) -> None:
             # page is stale if it has timeline content that might be newer.
             # For now, just mark not-stale (conservative).
             row["stale"] = False
-    except Exception:
-        # DB might not support this query; default to not stale
+    except Exception as e:
+        print(f"Warning: staleness check failed, defaulting to not-stale: {e}", file=sys.stderr)
         for row in rows:
             row["stale"] = False
 

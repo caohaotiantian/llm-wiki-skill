@@ -76,6 +76,7 @@ def parse_filter_string(where: str) -> list[Condition]:
     for token in tokens:
         m = _OPERATOR_RE.match(token)
         if not m:
+            print(f"Warning: ignoring malformed filter token: '{token}'", file=sys.stderr)
             continue
         conditions.append(Condition(field=m.group(1), op=m.group(2), value=m.group(3)))
     return conditions

@@ -21,6 +21,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import sys
 
 DEFAULT_ANTHROPIC_MODEL = "claude-haiku-4-5-20251001"
 DEFAULT_OPENAI_MODEL = "gpt-4o-mini"
@@ -71,7 +72,8 @@ def _expand_anthropic(
             messages=[{"role": "user", "content": _expansion_prompt(query, max_expansions)}],
         )
         return _parse_expansion_response(query, response.content[0].text, max_expansions)
-    except Exception:
+    except Exception as e:
+        print(f"Warning: expansion API call failed: {e}", file=sys.stderr)
         return [query]
 
 
@@ -104,7 +106,8 @@ def _expand_openai(
         )
         text = response.choices[0].message.content
         return _parse_expansion_response(query, text, max_expansions)
-    except Exception:
+    except Exception as e:
+        print(f"Warning: expansion API call failed: {e}", file=sys.stderr)
         return [query]
 
 
