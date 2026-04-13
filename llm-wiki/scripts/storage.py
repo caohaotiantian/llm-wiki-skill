@@ -24,6 +24,8 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+from frontmatter import parse as _parse_fm, parse_typed_links as _parse_typed_links_fm
+
 
 @dataclass
 class Page:
@@ -118,50 +120,24 @@ def _compute_content_hash(content: str) -> str:
 
 
 def _parse_frontmatter(content: str) -> dict:
-    """Parse YAML frontmatter from markdown content."""
-    content = content.replace("\r\n", "\n").replace("\r", "\n")
-    match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content, re.DOTALL)
-    if not match:
-        return {}
-    fm = match.group(1)
-    result = {}
-    for line in fm.split("\n"):
-        m = re.match(r"^(\w[\w_]*)\s*:\s*(.+)$", line)
-        if m:
-            key = m.group(1)
-            val = m.group(2).strip()
-            # Parse inline list: [a, b, c]
-            list_m = re.match(r"^\[([^\]]*)\]$", val)
-            if list_m:
-                result[key] = [v.strip().strip("\"'") for v in list_m.group(1).split(",") if v.strip()]
-            elif val.startswith('"') and val.endswith('"'):
-                result[key] = val[1:-1]
-            elif val.startswith("'") and val.endswith("'"):
-                result[key] = val[1:-1]
-            else:
-                result[key] = val
-    return result
+    """Parse YAML frontmatter from markdown content (backward-compat wrapper)."""
+    fm, _ = _parse_fm(content)
+    return fm
 
 
 def _parse_typed_links(content: str) -> list[dict]:
-    """Parse typed links from frontmatter content."""
-    content = content.replace("\r\n", "\n").replace("\r", "\n")
-    match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content, re.DOTALL)
-    if not match:
-        return []
-    fm = match.group(1)
-    links = []
-    for m in re.finditer(
-        r'-\s*\{[^}]*target:\s*"?([^",}\s]+)"?\s*,\s*type:\s*"?([^",}\s]+)"?[^}]*\}',
-        fm,
-    ):
-        links.append({"target": m.group(1), "type": m.group(2)})
-    return links
+    """Parse typed links from markdown content (backward-compat wrapper)."""
+    fm, _ = _parse_fm(content)
+    return _parse_typed_links_fm(fm)
+
+
+
+
 
 
 def _parse_page_from_markdown(slug: str, content: str) -> Page:
     """Parse a markdown file into a Page object."""
-    frontmatter = _parse_frontmatter(content)
+    frontmatter, _body = _parse_fm(content)
 
     # Extract title from first heading
     title = frontmatter.get("title", "")
@@ -179,9 +155,7 @@ def _parse_page_from_markdown(slug: str, content: str) -> Page:
             page_type = tags
 
     # Split compiled truth from timeline
-    normalized = content.replace("\r\n", "\n").replace("\r", "\n")
-    fm_match = re.match(r"^---\s*\n.*?\n(?:---|\.\.\.)(?:\s*\n)", normalized, re.DOTALL)
-    body = normalized[fm_match.end():] if fm_match else normalized
+    body = _body
     parts = re.split(r"\n---\s*\n", body, maxsplit=1)
     compiled_truth = parts[0].strip()
     timeline = parts[1].strip() if len(parts) > 1 else ""
@@ -190,9 +164,8 @@ def _parse_page_from_markdown(slug: str, content: str) -> Page:
     if title and compiled_truth.startswith(f"# {title}"):
         compiled_truth = compiled_truth[len(f"# {title}"):].strip()
 
-    # Parse typed links from frontmatter and override whatever the simple
-    # parser produced (it cannot handle YAML list-of-dicts).
-    typed_links = _parse_typed_links(content)
+    # Parse typed links from frontmatter
+    typed_links = _parse_typed_links_fm(frontmatter)
     if typed_links:
         frontmatter["links"] = typed_links
 
