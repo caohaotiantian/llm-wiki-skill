@@ -26,6 +26,7 @@ from typing import Any
 
 from chunking import chunk_page
 from embeddings import get_provider, EmbeddingProvider
+from expansion import expand_query
 from frontmatter import parse as parse_frontmatter, parse_typed_links as _parse_typed_links_fm
 
 
@@ -385,6 +386,39 @@ def cmd_sync(db: DbClient, vault_path: Path, provider: EmbeddingProvider) -> Non
     print(f"Sync complete. updated={updated}, skipped={skipped}, removed={removed}")
 
 
+def _average_embeddings(embeddings: list[list[float]]) -> list[float]:
+    """Element-wise mean of embedding vectors."""
+    if not embeddings:
+        return []
+    dim = len(embeddings[0])
+    avg = [0.0] * dim
+    for emb in embeddings:
+        for i in range(dim):
+            avg[i] += emb[i]
+    n = len(embeddings)
+    return [v / n for v in avg]
+
+
+def _merge_query_results(all_results: list[list[dict]]) -> list[dict]:
+    """Merge results from multiple queries using score summation."""
+    merged: dict[str, dict] = {}
+    score_acc: dict[str, float] = {}
+    best_score: dict[str, float] = {}
+    for results in all_results:
+        for row in results:
+            slug = row.get("page_slug", "")
+            row_score = row.get("score", 0)
+            score_acc[slug] = score_acc.get(slug, 0) + row_score
+            # Keep the dict from the highest-scored individual hit
+            if slug not in merged or row_score > best_score.get(slug, 0):
+                merged[slug] = dict(row)
+                best_score[slug] = row_score
+    for slug, entry in merged.items():
+        entry["score"] = score_acc[slug]
+    combined = sorted(merged.values(), key=lambda r: r.get("score", 0), reverse=True)
+    return combined[:20]
+
+
 def cmd_query(
     db: DbClient,
     vault_path: Path,
@@ -392,16 +426,73 @@ def cmd_query(
     query_text: str,
     *,
     as_json: bool = False,
+    expand: bool = False,
+    expand_thorough: bool = False,
 ) -> list[dict]:
     """Hybrid search: vector + keyword with RRF fusion.
 
     Returns a list of result dicts (also printed unless *as_json* is set).
+
+    When *expand* is True (fast mode), query paraphrases are embedded and
+    averaged into a single vector for the vector search.  When
+    *expand_thorough* is True, each paraphrase is searched independently
+    and results are merged by score summation.  *expand_thorough* takes
+    precedence over *expand*.
     """
+    # -- Thorough expansion: run separate searches and merge --
+    if expand_thorough:
+        paraphrases = expand_query(query_text)
+        print(
+            f"Expanded query into {len(paraphrases) - 1} paraphrases "
+            f"(thorough mode, {len(paraphrases)} queries)",
+            file=sys.stderr,
+        )
+        all_results: list[list[dict]] = []
+        for pq in paraphrases:
+            sub = cmd_query(db, vault_path, provider, pq, as_json=False)
+            all_results.append(sub)
+        rows = _merge_query_results(all_results)
+
+        # Staleness already annotated per sub-query; re-annotate merged set
+        _annotate_staleness(db, rows)
+
+        if as_json:
+            print(json.dumps(rows, indent=2, default=str))
+            return rows
+
+        if not rows:
+            print("No results found.")
+            return rows
+
+        print(f"Found {len(rows)} results for: {query_text}\n")
+        for i, row in enumerate(rows[:20]):
+            slug = row.get("page_slug", "?")
+            source = row.get("chunk_source", "?")
+            score = row.get("score", 0)
+            stale_flag = " [STALE]" if row.get("stale") else ""
+            excerpt = (row.get("chunk_text", "") or "")[:200].replace("\n", " ")
+            print(f"  [{i+1}] {slug} ({source}) score={score:.4f}{stale_flag}")
+            print(f"      {excerpt}...")
+            print()
+        return rows
+
+    # -- Fast expansion: average embeddings --
+    if expand:
+        paraphrases = expand_query(query_text)
+        print(
+            f"Expanded query into {len(paraphrases) - 1} paraphrases (fast mode)",
+            file=sys.stderr,
+        )
+
     use_vectors = provider.dimension() > 0
 
     if use_vectors:
-        # Embed query
-        query_embedding = provider.embed_batch([query_text])[0]
+        # Embed query (fast expand: average all paraphrase embeddings)
+        if expand:
+            all_embeddings = provider.embed_batch(paraphrases)
+            query_embedding = _average_embeddings(all_embeddings)
+        else:
+            query_embedding = provider.embed_batch([query_text])[0]
         emb_literal = "[" + ",".join(str(x) for x in query_embedding) + "]"
 
         # RRF hybrid search: vector rank + keyword rank fused via UNION ALL
@@ -705,6 +796,8 @@ def main():
     p_query.add_argument("query_text", help="Search query")
     p_query.add_argument("--provider", default=None, help="Embedding provider: null, local, openai/remote (default: auto-detect)")
     p_query.add_argument("--json", action="store_true", dest="json_output", default=False, help="Output results as JSON")
+    p_query.add_argument("--expand", action="store_true", help="Fast expansion: average embeddings")
+    p_query.add_argument("--expand-thorough", action="store_true", help="Thorough expansion: multi-query RRF")
 
     p_verify = sub.add_parser("verify", help="Health check")
     p_verify.add_argument("vault_path", type=Path, help="Path to vault directory")
@@ -726,7 +819,7 @@ def main():
             cmd_sync(db, args.vault_path, provider)
         elif args.command == "query":
             provider = get_provider(args.provider)
-            cmd_query(db, args.vault_path, provider, args.query_text, as_json=args.json_output)
+            cmd_query(db, args.vault_path, provider, args.query_text, as_json=args.json_output, expand=args.expand, expand_thorough=args.expand_thorough)
         elif args.command == "verify":
             cmd_verify(db, args.vault_path)
     finally:

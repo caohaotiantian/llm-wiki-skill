@@ -27,6 +27,8 @@ from index import (
     _parse_timeline_dates,
     _get_db_embedding_dim,
     _migrate_embedding_dim,
+    _average_embeddings,
+    _merge_query_results,
 )
 from embeddings import NullProvider
 
@@ -664,3 +666,151 @@ def test_sync_no_abort_when_dim_matches(capsys):
     out = capsys.readouterr().out + ""  # already consumed above
     # Should have proceeded with sync (execute was called for upserts)
     assert db.execute.call_count > 0
+
+
+# ---------------------------------------------------------------------------
+# Query expansion helper tests
+# ---------------------------------------------------------------------------
+
+def test_average_embeddings_basic():
+    """Average of two orthogonal vectors."""
+    result = _average_embeddings([[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]])
+    assert len(result) == 3
+    assert abs(result[0] - 0.5) < 1e-9
+    assert abs(result[1] - 0.5) < 1e-9
+    assert abs(result[2] - 0.0) < 1e-9
+
+
+def test_average_embeddings_single():
+    """Average of a single vector is itself."""
+    result = _average_embeddings([[0.3, 0.6, 0.9]])
+    assert len(result) == 3
+    assert abs(result[0] - 0.3) < 1e-9
+
+
+def test_average_embeddings_empty():
+    """Empty input returns empty list."""
+    assert _average_embeddings([]) == []
+
+
+def test_merge_query_results_dedup():
+    """Merge keeps highest-scored chunk and sums scores."""
+    r1 = [{"page_slug": "a", "score": 0.5, "chunk_text": "low"}]
+    r2 = [{"page_slug": "a", "score": 0.8, "chunk_text": "high"}]
+    merged = _merge_query_results([r1, r2])
+    assert len(merged) == 1
+    assert merged[0]["page_slug"] == "a"
+    assert merged[0]["chunk_text"] == "high"
+    assert abs(merged[0]["score"] - 1.3) < 1e-9
+
+
+def test_merge_query_results_limit():
+    """Merge limits to 20 results."""
+    results = [[{"page_slug": f"p-{i}", "score": 0.1, "chunk_text": f"t{i}"}] for i in range(30)]
+    merged = _merge_query_results(results)
+    assert len(merged) == 20
+
+
+# ---------------------------------------------------------------------------
+# Query expansion integration tests
+# ---------------------------------------------------------------------------
+
+def test_cmd_query_expand_fast(capsys):
+    """Fast expansion averages embeddings."""
+    db = _mock_db()
+
+    # Mock expansion to return original + 1 paraphrase
+    with patch("index.expand_query", return_value=["test query", "alternative phrasing"]):
+        provider = MagicMock()
+        provider.dimension.return_value = 3
+        provider.embed_batch.return_value = [[1.0, 0.0, 0.0], [0.0, 1.0, 0.0]]
+
+        db.query.return_value = [
+            {"page_slug": "result", "chunk_index": 0, "chunk_source": "compiled_truth",
+             "chunk_text": "Result content", "score": 0.8},
+        ]
+
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp)
+            results = cmd_query(db, vault, provider, "test query", expand=True)
+
+    assert len(results) >= 1
+    # embed_batch should have been called with both queries
+    provider.embed_batch.assert_called_once()
+    call_args = provider.embed_batch.call_args[0][0]
+    assert len(call_args) == 2
+
+    err = capsys.readouterr().err
+    assert "fast" in err.lower() or "paraphrase" in err.lower()
+
+
+def test_cmd_query_expand_thorough(capsys):
+    """Thorough expansion runs multiple queries and merges."""
+    db = _mock_db()
+    call_count = [0]
+
+    def query_side_effect(sql, *args, **kwargs):
+        # Return different results for different calls
+        if "websearch_to_tsquery" in sql:
+            call_count[0] += 1
+            return [
+                {"page_slug": f"page-{call_count[0]}", "chunk_index": 0,
+                 "chunk_source": "compiled_truth", "chunk_text": f"Content {call_count[0]}",
+                 "score": 0.5},
+            ]
+        # For staleness queries
+        return []
+
+    db.query.side_effect = query_side_effect
+
+    with patch("index.expand_query", return_value=["query1", "query2"]):
+        provider = NullProvider()
+
+        with tempfile.TemporaryDirectory() as tmp:
+            vault = Path(tmp)
+            results = cmd_query(db, vault, provider, "test query", expand_thorough=True)
+
+    # Should have results from multiple queries
+    assert len(results) >= 1
+
+    err = capsys.readouterr().err
+    assert "thorough" in err.lower() or "paraphrase" in err.lower()
+
+
+def test_cmd_query_no_expand(capsys):
+    """Without expand flags, no expansion happens."""
+    db = _mock_db()
+    db.query.return_value = [
+        {"page_slug": "alpha", "chunk_index": None, "chunk_source": "compiled_truth",
+         "chunk_text": "Alpha content", "score": 0.75},
+    ]
+
+    with patch("index.expand_query") as mock_expand:
+        provider = NullProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            results = cmd_query(db, Path(tmp), provider, "test")
+
+    mock_expand.assert_not_called()
+
+
+def test_cmd_query_thorough_takes_precedence(capsys):
+    """expand_thorough takes precedence over expand."""
+    db = _mock_db()
+
+    def query_side_effect(sql, *args, **kwargs):
+        if "websearch_to_tsquery" in sql:
+            return [{"page_slug": "p1", "chunk_index": 0,
+                      "chunk_source": "compiled_truth", "chunk_text": "text",
+                      "score": 0.5}]
+        return []
+
+    db.query.side_effect = query_side_effect
+
+    with patch("index.expand_query", return_value=["q1", "q2"]) as mock_expand:
+        provider = NullProvider()
+        with tempfile.TemporaryDirectory() as tmp:
+            results = cmd_query(db, Path(tmp), provider, "test",
+                                expand=True, expand_thorough=True)
+
+    err = capsys.readouterr().err
+    assert "thorough" in err.lower()
