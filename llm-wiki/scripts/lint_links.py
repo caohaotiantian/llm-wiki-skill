@@ -21,6 +21,8 @@ import re
 import sys
 from pathlib import Path
 
+from frontmatter import parse as _parse_fm, parse_aliases as _parse_aliases_fm, parse_typed_links as _parse_typed_links_fm
+
 
 def normalize_for_matching(name: str) -> str:
     """Normalize a name for fuzzy matching.
@@ -34,43 +36,9 @@ def normalize_for_matching(name: str) -> str:
 
 
 def parse_frontmatter_aliases(content: str) -> list[str]:
-    """Extract aliases from YAML frontmatter without PyYAML.
-
-    Handles both formats:
-        aliases: [a, b, c]
-        aliases:
-          - a
-          - b
-    """
-    # Normalize CRLF → LF for Windows compatibility
-    content = content.replace("\r\n", "\n").replace("\r", "\n")
-
-    # Extract frontmatter block (--- or ... as closing delimiter)
-    match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content, re.DOTALL)
-    if not match:
-        return []
-
-    fm = match.group(1)
-
-    # Try inline format: aliases: [a, b, c] or aliases: ["Smith, John", b]
-    inline = re.search(r"^aliases:\s*\[([^\]]*)\]", fm, re.MULTILINE)
-    if inline:
-        raw = inline.group(1)
-        # Parse respecting quoted values (commas inside quotes are not delimiters)
-        aliases = []
-        for m in re.finditer(r'"([^"]*?)"|\'([^\']*?)\'|([^,\s][^,]*)', raw):
-            val = (m.group(1) or m.group(2) or m.group(3) or "").strip()
-            if val:
-                aliases.append(val)
-        return aliases
-
-    # Try list format: aliases:\n  - a\n  - b
-    list_match = re.search(r"^aliases:\s*\n((?:\s+-\s+.+\n?)+)", fm, re.MULTILINE)
-    if list_match:
-        items = re.findall(r"^\s+-\s+(.+)", list_match.group(1), re.MULTILINE)
-        return [item.strip().strip("\"'") for item in items if item.strip()]
-
-    return []
+    """Extract aliases from YAML frontmatter."""
+    fm, _ = _parse_fm(content)
+    return _parse_aliases_fm(fm)
 
 
 KNOWN_LINK_TYPES = {
@@ -80,32 +48,9 @@ KNOWN_LINK_TYPES = {
 
 
 def parse_typed_links(content: str) -> list[dict]:
-    """Extract typed links from YAML frontmatter.
-
-    Handles format:
-        links:
-          - {target: "slug", type: "references"}
-          - {target: "other", type: "contradicts"}
-    Also handles unquoted values.
-    """
-    content = content.replace("\r\n", "\n").replace("\r", "\n")
-    match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content, re.DOTALL)
-    if not match:
-        return []
-    fm = match.group(1)
-    links = []
-    for m in re.finditer(
-        r'-\s*\{[^}]*target:\s*"?([^",}\s]+)"?\s*,\s*type:\s*"?([^",}\s]+)"?[^}]*\}',
-        fm,
-    ):
-        links.append({"target": m.group(1), "type": m.group(2)})
-    # Also handle reversed order: {type: ..., target: ...}
-    for m in re.finditer(
-        r'-\s*\{[^}]*type:\s*"?([^",}\s]+)"?\s*,\s*target:\s*"?([^",}\s]+)"?[^}]*\}',
-        fm,
-    ):
-        links.append({"target": m.group(2), "type": m.group(1)})
-    return links
+    """Extract typed links from YAML frontmatter."""
+    fm, _ = _parse_fm(content)
+    return _parse_typed_links_fm(fm)
 
 
 def _parse_updated_date(content: str) -> str | None:
