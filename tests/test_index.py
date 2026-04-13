@@ -25,6 +25,8 @@ from index import (
     cmd_verify,
     _annotate_staleness,
     _parse_timeline_dates,
+    _get_db_embedding_dim,
+    _migrate_embedding_dim,
 )
 from embeddings import NullProvider
 
@@ -494,3 +496,171 @@ def test_annotate_staleness_db_failure():
     rows = [{"page_slug": "my-page", "chunk_text": "some text"}]
     _annotate_staleness(db, rows)
     assert rows[0]["stale"] is False
+
+
+# ---------------------------------------------------------------------------
+# Embedding dimension detection tests
+# ---------------------------------------------------------------------------
+
+def test_get_db_embedding_dim_from_string_data():
+    """Detect dimension from string-encoded embedding data."""
+    db = _mock_db()
+    db.query.return_value = [{"embedding": "[0.1,0.2,0.3]"}]
+    assert _get_db_embedding_dim(db) == 3
+
+
+def test_get_db_embedding_dim_from_list_data():
+    """Detect dimension from list embedding data."""
+    db = _mock_db()
+    db.query.return_value = [{"embedding": [0.1, 0.2, 0.3, 0.4]}]
+    assert _get_db_embedding_dim(db) == 4
+
+
+def test_get_db_embedding_dim_no_data():
+    """Return None when no embeddings exist."""
+    db = _mock_db()
+    db.query.return_value = []
+    assert _get_db_embedding_dim(db) is None
+
+
+def test_get_db_embedding_dim_db_error():
+    """Return None on DB error."""
+    db = _mock_db()
+    db.query.side_effect = Exception("table not found")
+    assert _get_db_embedding_dim(db) is None
+
+
+def test_get_db_embedding_dim_null_embedding():
+    """Return None when embedding value is None."""
+    db = _mock_db()
+    db.query.return_value = [{"embedding": None}]
+    assert _get_db_embedding_dim(db) is None
+
+
+def test_migrate_embedding_dim(capsys):
+    """Migration deletes chunks, alters column, and recreates index."""
+    db = _mock_db()
+    _migrate_embedding_dim(db, 1536)
+
+    execute_calls = [str(c) for c in db.execute.call_args_list]
+    assert any("DELETE FROM content_chunks" in c for c in execute_calls)
+    assert any("ALTER TABLE" in c and "1536" in c for c in execute_calls)
+    assert any("DROP INDEX" in c for c in execute_calls)
+    assert any("CREATE INDEX" in c for c in execute_calls)
+
+    err = capsys.readouterr().err
+    assert "1536" in err
+    assert "Migrating" in err
+
+
+def test_rebuild_migrates_dimension(capsys):
+    """Rebuild auto-migrates when embedding dimension changes."""
+    db = _mock_db()
+    dim_query_done = [False]
+
+    def query_side_effect(sql, *args, **kwargs):
+        if "content_chunks" in sql and "embedding" in sql and not dim_query_done[0]:
+            dim_query_done[0] = True
+            return [{"embedding": "[" + ",".join(["0.1"] * 384) + "]"}]
+        return []
+
+    db.query.side_effect = query_side_effect
+
+    provider = MagicMock()
+    provider.dimension.return_value = 1536
+    provider.embed_batch.return_value = [[0.1] * 1536]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        vault = _make_vault(Path(tmp), {"page.md": "---\ntags: [concept]\n---\n\n# Page\n\nContent."})
+        cmd_rebuild(db, vault, provider)
+
+    alter_calls = [c for c in db.execute.call_args_list if "ALTER TABLE" in str(c)]
+    assert len(alter_calls) > 0
+
+    err = capsys.readouterr().err
+    assert "migrat" in err.lower()
+
+
+def test_rebuild_no_migration_when_dim_matches(capsys):
+    """Rebuild does not migrate when dimensions already match."""
+    db = _mock_db()
+    dim_query_done = [False]
+
+    def query_side_effect(sql, *args, **kwargs):
+        if "content_chunks" in sql and "embedding" in sql and not dim_query_done[0]:
+            dim_query_done[0] = True
+            return [{"embedding": "[" + ",".join(["0.1"] * 384) + "]"}]
+        return []
+
+    db.query.side_effect = query_side_effect
+
+    provider = MagicMock()
+    provider.dimension.return_value = 384
+    provider.embed_batch.return_value = [[0.1] * 384]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        vault = _make_vault(Path(tmp), {"page.md": "---\ntags: [concept]\n---\n\n# Page\n\nContent."})
+        cmd_rebuild(db, vault, provider)
+
+    alter_calls = [c for c in db.execute.call_args_list if "ALTER TABLE" in str(c)]
+    assert len(alter_calls) == 0
+
+    err = capsys.readouterr().err
+    assert "migrat" not in err.lower()
+
+
+def test_sync_aborts_on_dimension_mismatch(capsys):
+    """Sync warns and aborts when embedding dimension changes."""
+    db = _mock_db()
+    call_count = [0]
+
+    def query_side_effect(sql, *args, **kwargs):
+        call_count[0] += 1
+        if "content_chunks" in sql and "embedding" in sql:
+            return [{"embedding": "[" + ",".join(["0.1"] * 384) + "]"}]
+        if "slug" in sql and "content_hash" in sql:
+            return []
+        return []
+
+    db.query.side_effect = query_side_effect
+
+    provider = MagicMock()
+    provider.dimension.return_value = 1536
+
+    with tempfile.TemporaryDirectory() as tmp:
+        vault = _make_vault(Path(tmp), {"page.md": "---\ntags: [concept]\n---\n\n# Page\n\nContent."})
+        cmd_sync(db, vault, provider)
+
+    err = capsys.readouterr().err
+    assert "mismatch" in err.lower()
+    # Should NOT have called INSERT (no upserts)
+    insert_calls = [c for c in db.execute.call_args_list if "INSERT" in str(c)]
+    assert len(insert_calls) == 0
+
+
+def test_sync_no_abort_when_dim_matches(capsys):
+    """Sync proceeds normally when dimensions match."""
+    db = _mock_db()
+
+    def query_side_effect(sql, *args, **kwargs):
+        if "content_chunks" in sql and "embedding" in sql:
+            return [{"embedding": "[" + ",".join(["0.1"] * 384) + "]"}]
+        if "slug" in sql and "content_hash" in sql:
+            return [{"slug": "page", "content_hash": "oldhash"}]
+        return []
+
+    db.query.side_effect = query_side_effect
+
+    provider = MagicMock()
+    provider.dimension.return_value = 384
+    provider.embed_batch.return_value = [[0.1] * 384]
+
+    with tempfile.TemporaryDirectory() as tmp:
+        vault = _make_vault(Path(tmp), {"page.md": "---\ntags: [concept]\n---\n\n# Page\n\nContent."})
+        cmd_sync(db, vault, provider)
+
+    err = capsys.readouterr().err
+    assert "mismatch" not in err.lower()
+    out = capsys.readouterr().out + ""  # already consumed above
+    # Should have proceeded with sync (execute was called for upserts)
+    assert db.execute.call_count > 0

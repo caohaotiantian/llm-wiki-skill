@@ -258,6 +258,40 @@ def scan_wiki_pages(vault_path: Path) -> list[WikiPage]:
 
 
 # ---------------------------------------------------------------------------
+# Embedding dimension helpers
+# ---------------------------------------------------------------------------
+
+def _get_db_embedding_dim(db: DbClient) -> int | None:
+    """Get the current embedding dimension from existing data."""
+    try:
+        rows = db.query(
+            "SELECT embedding FROM content_chunks WHERE embedding IS NOT NULL LIMIT 1"
+        )
+        if rows and rows[0].get("embedding"):
+            emb = rows[0]["embedding"]
+            if isinstance(emb, (list, tuple)):
+                return len(emb)
+            if isinstance(emb, str) and emb.startswith("["):
+                return emb.count(",") + 1
+        return None
+    except Exception:
+        return None
+
+
+def _migrate_embedding_dim(db: DbClient, new_dim: int) -> None:
+    """Alter content_chunks embedding column to new dimension and clear existing embeddings."""
+    print(f"Migrating embedding dimension to {new_dim}...", file=sys.stderr)
+    db.execute("DELETE FROM content_chunks")
+    db.execute(f"ALTER TABLE content_chunks ALTER COLUMN embedding TYPE vector({new_dim})")
+    # Recreate HNSW index
+    db.execute("DROP INDEX IF EXISTS content_chunks_hnsw")
+    db.execute(
+        "CREATE INDEX content_chunks_hnsw ON content_chunks USING hnsw (embedding vector_cosine_ops)"
+    )
+    print(f"Embedding dimension migrated to {new_dim}.", file=sys.stderr)
+
+
+# ---------------------------------------------------------------------------
 # Subcommands
 # ---------------------------------------------------------------------------
 
@@ -270,6 +304,13 @@ def cmd_rebuild(db: DbClient, vault_path: Path, provider: EmbeddingProvider) -> 
 
     print(f"Rebuilding index for {len(pages)} pages...")
     use_vectors = provider.dimension() > 0
+
+    if use_vectors:
+        db_dim = _get_db_embedding_dim(db)
+        provider_dim = provider.dimension()
+        if db_dim is not None and db_dim != provider_dim:
+            print(f"Embedding dimension changed ({db_dim} → {provider_dim}). Migrating schema...", file=sys.stderr)
+            _migrate_embedding_dim(db, provider_dim)
 
     for page in pages:
         db.begin()
@@ -298,6 +339,18 @@ def cmd_sync(db: DbClient, vault_path: Path, provider: EmbeddingProvider) -> Non
         pass  # Table may not exist on first sync; rebuild will create it
 
     use_vectors = provider.dimension() > 0
+
+    if use_vectors:
+        db_dim = _get_db_embedding_dim(db)
+        provider_dim = provider.dimension()
+        if db_dim is not None and db_dim != provider_dim:
+            print(
+                f"Error: Embedding dimension mismatch (DB has {db_dim}, provider has {provider_dim}). "
+                f"Run 'rebuild' to migrate, or change your embedding provider back.",
+                file=sys.stderr,
+            )
+            return
+
     updated = 0
     skipped = 0
 
