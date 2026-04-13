@@ -1,140 +1,547 @@
 ---
 name: llm-wiki
 description: >
-  Build and maintain an autonomous, self-compounding knowledge base (wiki) inside an Obsidian vault.
-  Use this skill whenever the user wants to: create a knowledge base or wiki, ingest documents into a
-  structured knowledge system, query a compiled knowledge base, maintain or lint a wiki for consistency,
-  set up automated knowledge synchronization, or manage cross-referenced documentation. Also trigger
-  when the user mentions "wiki", "knowledge base", "knowledge graph", "ingest documents", "compile notes",
-  "cross-reference", "wiki lint", or wants to turn a collection of files into organized, interlinked knowledge.
-  This skill handles the full lifecycle: setup, ingestion, querying, linting, and continuous maintenance.
+  Build, maintain, and query an autonomous wiki knowledge base inside an Obsidian vault.
+  Trigger when the user wants to: set up a new wiki vault, ingest source documents into
+  wiki pages, query compiled wiki knowledge with citations, lint wiki pages for broken
+  links or stale content, manage wiki page scores, or rebuild the wiki search index.
+  Trigger phrases: "set up wiki vault", "ingest into wiki", "query the wiki",
+  "lint wiki links", "wiki knowledge base", "score wiki pages", "rebuild wiki index".
+  Do NOT trigger for: general Wikipedia references, markdown syntax questions,
+  or knowledge management discussions that don't involve an Obsidian vault.
 ---
 
 # LLM Wiki
 
-An autonomous, self-compounding knowledge base that lives in an Obsidian vault. You ingest raw sources (articles, PDFs, code, docs), the LLM synthesizes them into interlinked wiki pages, and periodic linting keeps everything consistent. The wiki is a **persistent, compounding artifact** — knowledge is pre-synthesized and cross-referenced, not re-queried from raw documents each time.
+An autonomous, self-compounding knowledge base in an Obsidian vault. You ingest raw sources (articles, PDFs, code, docs), synthesize them into interlinked wiki pages with `[[wikilinks]]`, and periodic linting keeps everything consistent. Knowledge is pre-synthesized and cross-referenced — not re-queried from raw documents each time.
 
-## Language Preference
-
-On first interaction, ask the user what language they prefer for wiki content. Store the preference in `.manifest.json` as a top-level `language` field (e.g. `"language": "zh-CN"`). Use this language for **all wiki pages, index entries, log entries, summaries, and query answers**. Technical terms, code, and proper nouns should remain in their original language. If the user's message language differs from the stored preference, follow the stored preference for wiki content but respond to the user in whatever language they used.
-
-The human is in charge of sourcing, exploration, and asking the right questions. You do the grunt work — summarizing, cross-referencing, filing, and bookkeeping.
+The human sources material and asks questions. You handle summarizing, cross-referencing, filing, and bookkeeping.
 
 ## Core Concepts
 
-### Three Layers
+Three layers: Raw Sources (immutable inputs) → Wiki Pages (synthesized knowledge) → Index/Schema (coordination files).
 
-```
-Raw Sources → Wiki Pages → Index/Schema
-(immutable)   (synthesized)  (coordination)
-```
-
-- **Raw sources** are never modified after ingestion. They are the ground truth. The `.manifest.json` tracks SHA-256 hashes to detect unauthorized changes. For extra protection on Unix systems, you can lock them with `chmod -R a-w raw/` — but this is optional and doesn't work on Windows.
-- **Wiki pages** are the synthesized knowledge layer — entities, concepts, topics — with cross-references via `[[wikilinks]]`.
-- **Index and log** are coordination files that track what exists and what happened.
-
-### Three Operations
-
-| Operation | What it does | When to use |
-|-----------|-------------|-------------|
-| **Ingest** | Process sources → create/update wiki pages | New source material arrives |
-| **Query** | Search wiki → synthesize answer with citations | User asks a question |
-| **Lint** | Health check → fix inconsistencies | Periodically, or after large ingests |
-
----
-
-## Vault Structure
-
-```
-<vault-root>/
-├── .obsidian/              # Obsidian configuration
-├── raw/                    # Immutable source documents (flat or organized — your choice)
-│   ├── extracted/          # Docling-extracted markdown versions of binary sources
-│   └── .manifest.json      # Tracks ingested sources (hash, timestamp, resulting pages)
-├── wiki/                   # Synthesized knowledge pages (subdirectories emerge from content)
-├── index.md                # Content catalog — organized by category
-├── log.md                  # Append-only operation history
-├── schema.md               # Wiki conventions and page templates
-└── .stats.json             # Page scoring counters and config
-```
-
-The subdirectories under both `raw/` and `wiki/` are **not prescribed** — they should emerge from the content. The agent discovers files by scanning recursively, not by expecting a fixed directory structure. Common starting patterns include `concepts/`, `entities/`, `topics/`, `sources/`, `queries/` — but a domain might naturally call for `protocols/`, `people/`, `systems/`, or something else entirely. Let the content dictate the taxonomy. The templates in `schema.md` provide five page types as starting points; adapt or ignore them as needed.
+Three operations: Ingest (source → pages), Query (search → answer), Lint (health checks).
 
 ---
 
 ## Setup
 
-When the user asks to set up a new wiki or knowledge base:
+When the user asks to set up a new wiki:
 
-1. **Ask language preference** — ask the user what language they want wiki content written in. Store it in `.manifest.json` as `"language": "<code>"` (e.g. `"zh-CN"`, `"en"`, `"ja"`). If the user doesn't specify, default to the language they're currently using.
-2. **Check dependencies** — verify the current Python environment has the optional packages:
+1. **Ask language preference** — store in `.manifest.json` as `"language": "<code>"` (e.g. `"zh-CN"`, `"en"`). All wiki content uses this language; technical terms and proper nouns stay in their original language. Default to the user's current language if unspecified.
+
+2. **Check dependencies** — verify optional packages:
    ```python
-   python3 -c "import docling; import pip_system_certs; print('Dependencies OK')"
+   python3 -c "import docling; import pip_system_certs; print('OK')"
    ```
-   - **If both imports succeed**: skip step 2 — use the current environment as-is.
-   - **If any import fails**: inform the user. These are optional — the skill works without them (the agent can read files directly and watch for changes manually). Ask whether they'd like to install into a virtual environment. Do not install without confirmation.
-3. **Set up a Python virtual environment** (only if step 2 failed and user agreed):
+   If imports fail, inform the user. These are optional — the skill works without them. Ask before installing into a venv:
    ```bash
    python3 -m venv <vault-path>/.venv
    <vault-path>/.venv/bin/pip install docling pip-system-certs
    ```
-   On Windows, use `<vault-path>\.venv\Scripts\pip` instead. This keeps the skill's dependencies isolated from the system Python.
-4. **Create the vault directory** at the user's specified path (or current directory)
-5. **Initialize the structure** — create `raw/`, `wiki/`, `index.md`, `log.md`, `schema.md`, and `raw/.manifest.json` (include the `language` field from step 1)
-6. **Initialize `.obsidian/`** with minimal config so Obsidian recognizes it as a vault
-7. **Register with Obsidian** (if installed) — open the vault using `open "obsidian://open?path=<vault-path>"`. Skip this step if Obsidian is not available; the wiki works as plain markdown files.
-8. **Write `schema.md`** — copy the contents of `references/schema.md` into the vault as `schema.md`
-9. **Add the vault directory to `.gitignore`** if the vault is inside a git repo that shouldn't track it
 
-### Minimal `.obsidian/` config
+3. **Create vault structure:**
+   ```
+   <vault-root>/
+   ├── .obsidian/app.json       # Minimal Obsidian config
+   ├── raw/                     # Immutable source documents
+   │   └── .manifest.json       # Source tracking (hash, pages, language)
+   ├── wiki/                    # Synthesized knowledge pages
+   ├── index.md                 # Page catalog by category
+   ├── log.md                   # Append-only operation history
+   ├── schema.md                # Copy from references/schema.md
+   └── .stats.json              # Page scoring counters
+   ```
 
-Create `.obsidian/app.json` (see `references/obsidian.md` for details on each setting):
-```json
-{
-  "alwaysUpdateLinks": true,
-  "newLinkFormat": "relative",
-  "useMarkdownLinks": false,
-  "strictLineBreaks": false,
-  "showFrontmatter": false,
-  "defaultViewMode": "preview",
-  "livePreview": true
-}
+4. **Initialize files** — create `index.md`, `log.md`, `schema.md` (from `references/schema.md`), `.manifest.json`, `.stats.json` with their initial content (see Coordination Files section for schemas).
+
+5. **Register with Obsidian** (if installed): `open "obsidian://open?path=<vault-path>"`
+
+6. **Gitignore** the vault directory if inside a tracked repo.
+
+The subdirectories under both `raw/` and `wiki/` are **not prescribed** — they emerge from the content. The agent discovers files by scanning recursively. Common patterns include `concepts/`, `entities/`, `topics/`, `sources/`, `queries/` — but let the content dictate the taxonomy.
+
+---
+
+## Page Model
+
+### Compiled Truth + Timeline
+
+Every wiki page has two zones separated by `---`:
+
+- **Above:** Compiled truth — current best understanding. Rewrite when new evidence changes the picture.
+- **Below:** Timeline — append-only evidence trail (newest first). Never edit, only extend.
+
+See `references/schema.md` for full templates and examples.
+
+### Frontmatter
+
+```yaml
+---
+aliases: []
+tags: []
+sources:
+  - "[[raw/articles/source-name]]"
+links:
+  - {target: "page-slug", type: "references"}
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+status: active       # active | stub | needs-review | archived
+weight: 0            # additive score boost (optional)
+---
 ```
 
-### Initial `index.md`
+### Typed Links
+
+Declare relationships in frontmatter `links:` — this is the authoritative edge set for graph queries. Wikilinks in prose are for readability.
+
+Types: `references`, `contradicts`, `depends_on`, `supersedes`, `authored_by`, `works_at`, `mentions`. Extensible.
+
+### Linking Rules
+
+- Link target MUST be the exact filename without `.md`: `[[artificial-intelligence]]`
+- Display text uses pipe syntax: `[[artificial-intelligence|AI]]`
+- Never write bare `[[alias]]` — Obsidian does not resolve aliases in link targets
+- See `references/obsidian.md` → "Wikilink Resolution Rules"
+
+### Provenance Markers
+
+- No marker = extracted from source
+- `^[inferred]` = LLM-synthesized
+- `^[ambiguous]` = sources disagree
+- Frontmatter `status` is page-level; inline footnotes are claim-level. Both are complementary.
+
+---
+
+## Ingest
+
+When the user provides source material (files, URLs, pasted text):
+
+### Step 1: Accept and store the source
+
+- **Local files**: Place anywhere inside `raw/` (flat or subdirectories)
+- **URLs**: Fetch and save as `raw/<domain>-<slug>.md` with `source_url` in frontmatter
+- **Pasted text**: Save to `raw/YYYY-MM-DD-<brief-slug>.md`
+- **Binary files** (PDF, DOCX, PPTX, XLSX, images, HTML): Extract first, then ingest the extracted markdown. Two approaches:
+
+  **Docling extraction** (recommended for complex documents):
+  ```bash
+  python <skill-dir>/scripts/extract.py <input-file>          # → raw/extracted/...
+  python <skill-dir>/scripts/extract.py --no-ocr <input-file>  # faster, no OCR
+  ```
+  Record `extraction_method` in manifest: `docling +ocr`, `docling`, or `fallback`.
+
+  **Agent direct reading** (fallback):
+  Read the file directly using your built-in file reading. Record `extraction_method: agent` in manifest (no `extracted` field). Works well for short, clean documents. Less reliable for scanned pages, complex tables, or large files.
+
+- **Save a snapshot** for diff-based re-ingestion: `<source-path>.snapshot.md` (or `<extracted-path>.snapshot.md` for binaries)
+
+### Step 2: Read and understand
+
+- Read the source thoroughly
+- Identify key concepts, entities, relationships, claims, open questions
+- Check `index.md` for relevant existing pages
+
+### Step 3: Compile into wiki pages
+
+- **Existing page**: Update with new information. Merge, don't duplicate.
+- **New topic**: Create using templates from `schema.md`
+- Follow the page model (compiled truth + timeline, typed links, provenance markers)
+- Every page gets a one-sentence summary lead
+
+### Step 4: Cross-link and verify
+
+- Use `[[wikilinks]]` for all references. Targets must be exact filenames.
+- Scan existing pages for mentions of new concepts — add links there too
+- Every page must be reachable from at least one other page
+- For each unresolvable link target, create a stub:
 
 ```markdown
-# Wiki Index
-
-> Auto-maintained catalog of all wiki pages. Updated on every ingest.
-
-## Concepts
-
-## Entities
-
-## Topics
-
-## Sources
-
-## Queries
+---
+aliases: []
+tags: [concept]
+sources: []
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+status: stub
+---
+# Page Title
+> [!todo] Stub
+> Auto-created — expand when source material is available.
+## Referenced from
+- [[page-that-linked-here]]
 ```
 
-### Initial `log.md`
+Set the `tags` value to whichever type fits the context (`concept`, `entity`, `topic`, etc.).
 
-The log uses a strict format so it can be reliably parsed by grep. Never deviate from this heading structure — consistency matters more than aesthetics here.
+### Step 5: Update coordination files
+
+- **`index.md`**: Add/update entries for new/modified pages
+- **`.manifest.json`**: Record source path, SHA-256, timestamp, pages created/updated
+- **`log.md`**: Defer until after validation (Step 6)
+
+### Step 6: Validate links
+
+```bash
+python <skill-dir>/scripts/lint_links.py <vault-path> --files <pages...> --json
+```
+
+- **`alias_mismatches`**: Run again with `--fix` to rewrite `[[alias]]` → `[[filename|alias]]`
+- **`missing`**: Create stubs (Step 4 template), re-run to confirm resolution
+- Append to `log.md` only after validation passes (`clean: true` in JSON output)
+
+Note: `--fix` with `--files` only repairs links in the specified files. For a complete vault-wide fix, run without `--files`.
+
+### Step 7: Update page scores
+
+```bash
+python <skill-dir>/scripts/score_pages.py <vault-path> --pages <pages...> --json
+```
+
+Also increment `access_count` in `.stats.json` for every existing page read during cross-linking in Steps 3–4. Use a single read-modify-write cycle to avoid partial updates.
+
+### Batch ingestion
+
+Process multiple sources in a single pass to maximize cross-referencing. Read all sources first, then compile pages that synthesize across them.
+
+### Mass update safeguard
+
+If an ingest would modify more than 10 existing pages, pause and list affected pages for user confirmation. Does not apply to creating new pages.
+
+---
+
+## Query
+
+When the user asks a question about the wiki's knowledge:
+
+### Step 1: Expand the query (optional)
+
+If an expansion API is configured, generate paraphrases for better recall:
+
+```bash
+python <skill-dir>/scripts/expansion.py "<question>"
+```
+
+Returns the original query plus paraphrases. Run each through search in Step 2 and merge results. If no API is configured, this returns only the original query — skip to Step 2.
+
+> **Note:** Expansion is not integrated into `index.py` — you must call it separately and search each paraphrase individually.
+
+### Step 2: Search
+
+**If the index is available** (PGlite or Postgres running):
+
+```bash
+python <skill-dir>/scripts/index.py query <vault-path> "query text" --json
+```
+
+This combines vector similarity + keyword search via reciprocal rank fusion (RRF). Results include chunk excerpts and scores.
+
+**Narrow with attribute filters:**
+
+```bash
+python <skill-dir>/scripts/query_filter.py <vault-path> --where "type=concept tag=strategy" --json
+```
+
+Filter syntax: `type=concept`, `tag=X`, `confidence>=0.7`, `updated_since=30d`, `has=field`, and comparison operators `=`, `!=`, `>`, `<`, `>=`, `<=`.
+
+**If no index is available:** Fall back to reading `index.md` and using grep/glob.
+
+### Step 3: Rank and retrieve
+
+Sort candidates by `computed_score` descending (from frontmatter). Read the highest-scored pages first.
+
+### Step 4: Synthesize
+
+Answer using the wiki's compiled knowledge. When multiple pages cover the same topic, weight higher-scored pages more. Cite sources with `[[wikilinks]]` — list higher-scored sources first.
+
+### Step 5: Update counters
+
+- Increment `access_count` in `.stats.json` for every page **read**
+- Increment `query_count` in `.stats.json` for every page **cited in the answer**
+
+### Step 6: File the answer (conditional)
+
+Save as a page under `wiki/queries/` if the answer synthesizes across 3+ pages or reveals a non-obvious connection. Don't file simple lookups. Ask the user if borderline.
+
+### Query output format
 
 ```markdown
-# Operation Log
+## Answer
+[Synthesized answer citing [[Wiki Page]] sources]
 
-> Append-only record of wiki operations. Each entry follows the exact format:
-> `## [YYYY-MM-DD HH:MM] action | subject`
-> where action is one of: setup, ingest, re-ingest, query, lint, update
-
-## [YYYY-MM-DD HH:MM] setup | Wiki initialized
-- Vault created at `<path>`
+### Sources consulted
+- [[wiki/concepts/concept-a]] — relevant because X
+- [[wiki/entities/entity-b]] — mentioned Y
 ```
 
-### Initial `.manifest.json`
+---
+
+## Lint
+
+Run periodically or when the user asks. Linting ensures wiki health.
+
+### Automated checks
+
+These are script-backed and produce structured output:
+
+| Check | Command | Auto-fixable? |
+|-------|---------|---------------|
+| **Dead links** (alias mismatches + missing targets) | `lint_links.py <vault> --json` | Yes (`--fix` for aliases, stubs for missing) |
+| **Stale pages** (timeline newer than compiled truth) | `lint_links.py <vault> --stale` | No — flag for rewrite |
+| **Unbalanced pages** (5+ timeline entries since last rewrite) | `lint_links.py <vault> --unbalanced` | No — flag for review |
+| **Orphaned pages** | `graph.py <vault> orphans` | No — add links or archive |
+| **Score staleness** | `score_pages.py <vault> --json` | Yes — full recalc |
+
+### Agent judgment checks
+
+These require reading pages — no script automation:
+
+| Check | What to look for |
+|-------|-----------------|
+| **Missing cross-refs** | Pages that mention concepts without linking them |
+| **Index drift** | Pages that exist but aren't in `index.md` |
+| **Duplicate concepts** | Multiple pages covering the same topic |
+| **Empty sections** | Placeholder sections never filled |
+| **Frontmatter issues** | Missing required fields, outdated timestamps |
+| **Schema drift** | Pages using outdated frontmatter (missing fields, deprecated tags) |
+
+### Dead link resolution (two-phase)
+
+**Phase 1 — Alias mismatches:** Run `lint_links.py <vault> --fix` to auto-rewrite `[[alias]]` → `[[filename|alias]]`.
+
+**Phase 2 — Stub creation:** Create stub pages for remaining missing targets (use the stub template from Ingest Step 4).
+
+Always run Phase 1 before Phase 2 — some "missing pages" are actually alias mismatches.
+
+### Score recalculation
+
+Run a full scoring recalc as part of every lint:
+
+```bash
+python <skill-dir>/scripts/score_pages.py <vault-path> --json
+```
+
+Include in the lint report: top 10 pages by score, pages with zero activity.
+
+### Lint report
+
+Save to `wiki/lint-YYYY-MM-DD.md`:
+
+```markdown
+# Lint Report — YYYY-MM-DD
+
+## Summary
+- X issues found, Y auto-fixed, Z need attention
+
+## Auto-fixed
+- Rewrote N alias mismatches
+- Added stubs for M missing targets
+- Recalculated all page scores
+
+## Needs Attention
+- [[concept-a]] stale — 3 new timeline entries since last rewrite
+- [[entity-x]] orphaned — no incoming links
+- [[concept-b]] and [[concept-c]] may be duplicates — consider merging
+```
+
+Append summary to `log.md`.
+
+---
+
+## Change Detection
+
+### Auto-ingest (on conversation start)
+
+When the wiki is in scope, scan for changes and ingest automatically:
+
+1. **Scan:**
+   ```bash
+   python <skill-dir>/scripts/scan.py <vault-path> --json
+   ```
+   Detects: new files not in manifest, modified sources (hash mismatch), failed extractions (extracted file missing), low-quality extractions (<1% size ratio or <50 bytes).
+
+2. **New files** → extract (if binary) and ingest via the full Ingest workflow
+3. **Modified sources** → re-ingest using diff-based cascading update (below)
+4. **Failed/low-quality extractions** → retry extraction
+
+Report briefly: "Auto-ingested 2 new files, re-ingested 1 modified source. Created 5 pages, updated 2."
+
+No user confirmation needed — **except** when the mass update safeguard applies (modifying >10 existing pages).
+
+### Continuous monitoring (optional)
+
+```bash
+python <skill-dir>/scripts/scan.py <vault-path> --watch 300               # scan every 5 min
+python <skill-dir>/scripts/scan.py <vault-path> --watch 300 --auto-extract # scan + extract
+```
+
+Run in a terminal tab or cron job. Logs changes for the next conversation's auto-ingest.
+
+### Cascading updates (diff-based re-ingestion)
+
+When a source is modified:
+
+**1. Diff the source:**
+```bash
+python <skill-dir>/scripts/diff_sources.py <source>.snapshot.md <new-source> --json
+```
+Produces added/removed/changed sections. If no snapshot exists, read the entire source.
+
+**2. Scope the update:**
+- Added sections → check if new pages needed
+- Removed sections → check and remove obsolete claims
+- Changed sections → update specific facts in affected pages
+- Unchanged sections → skip entirely
+
+**3. Update affected pages:**
+- Check `.manifest.json` for which pages came from this source
+- Modify only parts corresponding to changed sections — don't regenerate from scratch
+- Follow the link graph: if changes affect linked pages (renamed concept, corrected fact), update those too
+
+**4. Validate and finalize:**
+- Validate links: `lint_links.py <vault-path> --files <modified-pages...> --fix`
+- Save new snapshot (overwrite old)
+- Update `.manifest.json` (new hash, timestamp, page lists)
+- Update `index.md`, append to `log.md` (only after validation passes)
+
+### Cascade depth
+
+- **Factual correction**: Update page + pages citing the corrected fact
+- **New information**: Update page + pages that benefit from new info
+- **Structural change** (rename, merge): Follow all incoming links and update references
+
+---
+
+## Deleting and Archiving
+
+### Removing a source
+
+1. Delete the source file from `raw/` (or move to `_archive/`)
+2. Remove its entry from `.manifest.json`
+3. For pages solely derived from this source (no other sources in frontmatter): delete or set `status: archived`
+4. For multi-source pages: remove references to the deleted source, keep the page
+5. Run orphan check — fix dangling references from deleted/archived pages
+6. Update `index.md`, append to `log.md`
+
+### Archiving pages
+
+Set `status: archived` in frontmatter rather than deleting. Preserves link history and allows recovery. Archived pages are excluded from query results by checking the status field.
+
+---
+
+## Supporting Tools
+
+> `<skill-dir>` refers to the directory containing this SKILL.md file.
+
+### Page Scoring
+
+Five indicators feed a composite `computed_score` written to each page's frontmatter:
+
+| Indicator | Source | Effect |
+|-----------|--------|--------|
+| Query frequency | `.stats.json` `query_count` | Pages cited in answers score higher |
+| Access count | `.stats.json` `access_count` | Pages read more often score higher |
+| Cross-ref density | Incoming `[[wikilinks]]` (scanned live) | Well-connected pages score higher |
+| Manual weight | `weight` frontmatter field (default: 0) | User-set additive boost |
+| Priority tags | `#pinned` +10, `#priority/high` +6, `medium` +3, `low` +1 | Fixed bonus |
+
+Formula: `computed_score = (0.4 * norm(qf) + 0.3 * norm(ac) + 0.3 * norm(crd)) + weight + tag_bonus`
+
+`norm()` scales 0–10 relative to max across all pages. Weights configurable in `.stats.json`.
+
+```bash
+python <skill-dir>/scripts/score_pages.py <vault-path>                    # full recalc
+python <skill-dir>/scripts/score_pages.py <vault-path> --pages <pages..>  # incremental
+python <skill-dir>/scripts/score_pages.py <vault-path> --json             # structured output
+```
+
+### Search Index
+
+Hybrid retrieval (vector + keyword) backed by PGlite or Postgres. The index is a **derived cache** — deleting it is always safe and it can be rebuilt.
+
+**Database setup** (one of):
+- **PGlite sidecar**: Requires Node.js 18+. Auto-initializes schema on first run. Listens on port 5488.
+  ```bash
+  node <skill-dir>/scripts/sidecar/server.js --data-dir <vault-path>/index
+  ```
+  Override URL: set `PGLITE_URL` env var.
+- **Native Postgres**: Set `DATABASE_URL` env var. No Node.js needed.
+
+**Embeddings** (one of):
+- **Local**: `pip install sentence-transformers` — 384-dim, CPU, no API key
+- **Remote** (any OpenAI-compatible API): Set `EMBEDDING_API_KEY` and optionally `EMBEDDING_BASE_URL`, `EMBEDDING_MODEL`, `EMBEDDING_DIMENSION`
+- **None**: Keyword-only search (no embedding dependency)
+
+**Commands:**
+```bash
+python <skill-dir>/scripts/index.py rebuild <vault-path>              # full reindex
+python <skill-dir>/scripts/index.py sync <vault-path>                 # incremental
+python <skill-dir>/scripts/index.py query <vault-path> "text" --json  # hybrid search
+python <skill-dir>/scripts/index.py verify <vault-path>               # health check
+```
+
+Run `sync` after every successful ingest and on conversation start. Run `verify` as part of lint.
+
+### Graph Analysis
+
+Analyze the wiki's link structure. Requires `pip install networkx` (degrades gracefully without it). Works from typed links in frontmatter (authoritative) with wikilinks in prose as fallback edges.
+
+```bash
+python <skill-dir>/scripts/graph.py <vault-path> neighbors <slug> --depth 2
+python <skill-dir>/scripts/graph.py <vault-path> path <from> <to>
+python <skill-dir>/scripts/graph.py <vault-path> centrality --metric pagerank --limit 20
+python <skill-dir>/scripts/graph.py <vault-path> communities
+python <skill-dir>/scripts/graph.py <vault-path> orphans
+python <skill-dir>/scripts/graph.py <vault-path> stats
+```
+
+All commands support `--format json` for structured output.
+
+### Query Expansion
+
+Generate query paraphrases for better search recall. Requires an LLM API.
+
+```bash
+python <skill-dir>/scripts/expansion.py "search query"
+```
+
+Configure via env vars: `EXPANSION_PROVIDER` (`anthropic` or `openai`), `EXPANSION_API_KEY`, `EXPANSION_BASE_URL`, `EXPANSION_MODEL`. Falls back to `ANTHROPIC_API_KEY` then `OPENAI_API_KEY`. Default models: `claude-haiku-4-5-20251001` (Anthropic), `gpt-4o-mini` (OpenAI). Returns only the original query if no API is configured.
+
+### Storage Backend
+
+`scripts/storage.py` provides a `StorageBackend` protocol abstracting page CRUD, link management, and search.
+
+**FileVaultBackend** (default): Markdown files are authoritative. Keyword search via string matching. No database dependency.
+
+```bash
+python <skill-dir>/scripts/storage.py <vault-path> list-pages
+python <skill-dir>/scripts/storage.py <vault-path> get-page <slug>
+python <skill-dir>/scripts/storage.py <vault-path> search "query"
+```
+
+**DatabaseBackend**: Not yet implemented — all methods raise `NotImplementedError`. Planned for database-first workflows where the DB is authoritative and markdown is exported.
+
+### Document Extraction
+
+See Ingest Step 1 for extraction commands. Additional scanning tool:
+
+```bash
+python <skill-dir>/scripts/scan.py <vault-path> --json          # find work
+python <skill-dir>/scripts/scan.py <vault-path> --auto-extract   # scan + extract
+```
+
+### Text Chunking
+
+`scripts/chunking.py` splits pages into ~300-word chunks with 50-word overlap for embedding. Page-aware mode separates compiled truth from timeline. Used internally by `index.py` — agents rarely call this directly.
+
+---
+
+## Coordination Files
+
+Reference schemas for files created during setup and maintained during operations.
+
+### .manifest.json
 
 ```json
 {
@@ -144,7 +551,25 @@ The log uses a strict format so it can be reliably parsed by grep. Never deviate
 }
 ```
 
-### Initial `.stats.json`
+Populated entry:
+```json
+{
+  "path": "raw/articles/microservices-design.pdf",
+  "extracted": "raw/extracted/articles/microservices-design.pdf.md",
+  "extraction_method": "docling +ocr",
+  "sha256": "a1b2c3d4e5f6...",
+  "ingested_at": "2026-04-07T14:30:00Z",
+  "size_bytes": 4523,
+  "pages_created": ["wiki/concepts/microservices.md"],
+  "pages_updated": ["wiki/entities/team-beta.md"]
+}
+```
+
+Fields: `path` (relative to vault root), `extracted` (omit for text/markdown), `extraction_method` (`docling +ocr`, `docling`, `fallback`, `agent`; omit for text/markdown), `sha256`, `ingested_at` (ISO), `size_bytes`, `pages_created`, `pages_updated`. Snapshots use deterministic naming (`<source-or-extracted-path>.snapshot.md`) and are not tracked in the manifest.
+
+Compute SHA-256: `python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>`
+
+### .stats.json
 
 ```json
 {
@@ -164,696 +589,87 @@ The log uses a strict format so it can be reliably parsed by grep. Never deviate
 }
 ```
 
-This file tracks page access counters and scoring configuration. The `weights` control how much each computed indicator contributes to the final score. The `tag_bonuses` define fixed score additions for priority tags. Both are user-tunable. See **Page Scoring** below for details.
+`weights` and `tag_bonuses` are user-tunable. See Page Scoring in Supporting Tools.
 
-A populated manifest entry looks like this — follow this schema exactly so cross-session consistency is maintained:
+### .obsidian/app.json
 
 ```json
 {
-  "sources": [
-    {
-      "path": "raw/articles/microservices-design.pdf",
-      "extracted": "raw/extracted/articles/microservices-design.pdf.md",
-      "extraction_method": "docling +ocr",
-      "sha256": "a1b2c3d4e5f6...",
-      "ingested_at": "2026-04-07T14:30:00Z",
-      "size_bytes": 4523,
-      "pages_created": ["wiki/concepts/microservices.md", "wiki/entities/order-service.md"],
-      "pages_updated": ["wiki/entities/team-beta.md"]
-    }
-  ],
-  "version": 1
+  "alwaysUpdateLinks": true,
+  "newLinkFormat": "relative",
+  "useMarkdownLinks": false,
+  "strictLineBreaks": false,
+  "showFrontmatter": false,
+  "defaultViewMode": "preview",
+  "livePreview": true
 }
 ```
 
-Fields: `path` (relative to vault root), `extracted` (path to the extracted markdown in `raw/extracted/`, omit for text/markdown sources that don't need extraction), `extraction_method` (`docling +ocr`, `docling`, `fallback`, or `agent`; omit for text/markdown sources), `sha256` (file hash for change detection), `ingested_at` (ISO timestamp), `size_bytes` (file size), `pages_created` (new pages from this source), `pages_updated` (existing pages modified during this ingest).
-
-Snapshot files follow a deterministic naming convention (`<source-or-extracted-path>.snapshot.md`) and do not need to be tracked in the manifest.
-
-Compute SHA-256 with: `python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>`
-
----
-
-## Page Model: Compiled Truth + Timeline
-
-Every wiki page follows a two-zone structure separated by a horizontal rule (`---`):
-
-- **Above the rule — Compiled Truth:** The current best understanding. Rewrite in place when new evidence changes the picture.
-- **Below the rule — Timeline:** Append-only evidence trail of dated entries (newest first). Never edit, only extend.
-
-See `references/schema.md` → "Compiled Truth + Timeline Model" for the full convention and examples.
-
-### Typed Links
-
-Pages declare relationships in frontmatter:
-
-```yaml
-links:
-  - {target: "page-slug", type: "references"}
-  - {target: "other-page", type: "contradicts"}
-```
-
-Supported types: `references`, `contradicts`, `depends_on`, `supersedes`, `authored_by`, `works_at`, `mentions`. The list is extensible. Wikilinks in prose still work for readability; frontmatter `links:` is the authoritative edge set for graph queries.
-
----
-
-## Ingest
-
-Ingestion is the core operation. When the user provides source material (files, URLs, pasted text):
-
-### Step 1: Accept and store the source
-
-- **Local files**: The user can place files anywhere inside `raw/` — flat or in subdirectories. If the agent is copying files on the user's behalf, just put them directly in `raw/` (or a subdirectory if the user prefers organization). No specific directory structure is required.
-- **URLs**: Fetch the content and save as `raw/<domain>-<slug>.md`. Store the original URL in the file's YAML frontmatter as `source_url`.
-- **Pasted text**: Save to `raw/YYYY-MM-DD-<brief-slug>.md`
-- For non-markdown files (PDF, DOCX, etc.), extract text content first (see **Document Extraction** below). Extracted markdown goes to `raw/extracted/<filename>.md`.
-- **Save a snapshot** for diff-based re-ingestion later — instead of re-reading the entire source, the agent can diff the snapshot against the new version to see exactly what changed. For text/markdown sources, the snapshot goes alongside the source (e.g., `raw/article.md.snapshot.md`). For extracted binary files, the snapshot goes alongside the extracted file (e.g., `raw/extracted/report.pdf.md.snapshot.md`).
-
-### Step 2: Read and understand
-
-- Read the source material thoroughly
-- Identify: key concepts, entities (people, organizations, systems), relationships, claims, and open questions
-- Note which existing wiki pages are relevant (check `index.md`)
-
-### Step 3: Compile into wiki pages
-
-For each significant concept, entity, or topic found in the source:
-
-- **If a wiki page already exists**: Update it with new information, marking the source. Merge, don't duplicate.
-- **If it's genuinely new**: Create a new page using the templates in `schema.md`
-
-Each wiki page should follow the compiled-truth/timeline model:
+### index.md
 
 ```markdown
----
-aliases: []
-tags: []
-sources:
-  - "[[raw/articles/source-name]]"
-links:
-  - {target: "related-concept", type: "references"}
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-status: active
----
+# Wiki Index
 
-# Page Title
+> Auto-maintained catalog of all wiki pages. Updated on every ingest.
 
-One-to-two sentence summary for quick scanning.
+## Concepts
 
-## Overview
-<!-- Core description — this is compiled truth, rewritten on new evidence -->
+## Entities
 
-## Details
-<!-- Deeper content, organized by the topic's natural structure -->
+## Topics
 
-## Relationships
-<!-- Links to related wiki pages with brief context -->
-- Related to [[Other Concept]] — because X
-- Part of [[Broader Topic]]
+## Sources
 
-## Open Questions
-> [!question] Question text
-> Why this matters and what we'd need to answer it.
-
----
-
-## Timeline
-
-- YYYY-MM-DD: Created from [[raw/articles/source-name]]
+## Queries
 ```
 
-Everything above the `---` separator is compiled truth (rewritable). Everything below is the timeline (append-only). Add typed links to frontmatter for each relationship.
+Entries sorted by `computed_score` descending within each category: `- [[page-name]] (score: 9.2) — one-line summary`
 
-**Linking rules:**
-- The link target in `[[wikilinks]]` MUST be the exact filename of the target page (without `.md`). For example, if the file is `wiki/concepts/artificial-intelligence.md`, link to it as `[[artificial-intelligence]]`.
-- To display an alternative name, use pipe syntax: `[[artificial-intelligence|AI]]`.
-- Never write `[[alias-text]]` as a bare link — Obsidian does not resolve aliases in link targets. See `references/obsidian.md` → "Wikilink Resolution Rules" for details.
-
-### Step 4: Cross-link and verify
-
-- Use `[[wikilinks]]` for all references to other wiki pages. Link targets must be exact filenames — use `[[filename|display text]]` when the display text differs from the filename.
-- Scan existing pages for mentions of newly created concepts — add links there too
-- Every page should be reachable from at least one other page (no orphans)
-- **Verify every link target:** For each `[[wikilink]]` in the page, confirm the target file exists (or will be created in this batch). If it doesn't exist and isn't planned for creation, create a stub page immediately:
+### log.md
 
 ```markdown
----
-aliases: []
-tags: [concept]
-sources: []
-created: YYYY-MM-DD
-updated: YYYY-MM-DD
-status: stub
----
+# Operation Log
 
-# Page Title
+> Append-only record. Format: `## [YYYY-MM-DD HH:MM] action | subject`
+> Actions: setup, ingest, re-ingest, query, lint, update
 
-> [!todo] Stub
-> This page was auto-created because it was referenced from other wiki pages.
-> Expand it when source material is available.
-
-## Referenced from
-- [[page-that-linked-here]]
+## [YYYY-MM-DD HH:MM] setup | Wiki initialized
+- Vault created at `<path>`
 ```
 
-Set the `tags` value to whichever type fits the context (`concept`, `entity`, `topic`, etc.) — don't leave it empty, or the stub will be invisible to Dataview queries.
-
-### Step 5: Update coordination files
-
-- **`index.md`**: Add/update entries for all new/modified pages with one-line summaries
-- **`.manifest.json`**: Record the source file path, SHA-256 hash, timestamp, and list of resulting wiki pages
-- **`log.md`**: Defer the log entry until after Step 5.5 validation passes. Then append `## [2026-04-07 14:30] ingest | Source Title` with a bullet list of pages created/updated
-
-### Step 5.5: Validate links
-
-Run the link validation script on all pages created and updated in this ingest:
-
-```bash
-python <skill-dir>/scripts/lint_links.py <vault-path> --files <page1.md> <page2.md> ... --json
-```
-
-Process the results:
-- **`alias_mismatches`**: Run again with `--fix` to automatically rewrite `[[alias]]` → `[[filename|alias]]`:
-  ```bash
-  python <skill-dir>/scripts/lint_links.py <vault-path> --files <page1.md> <page2.md> ... --fix
-  ```
-- **`missing`**: Create stub pages (`status: stub`) for each missing target using the template from Step 4, then re-run validation to confirm all links resolve
-- Only append the `log.md` entry (deferred from Step 5) **after** validation passes (the `clean` field in JSON output is `true`)
-
-This step catches two common issues: links that use an alias instead of the canonical filename (which Obsidian cannot resolve), and forward-references to pages that were mentioned but never created. Note: `--fix` with `--files` only repairs links in the specified files. For a complete vault-wide fix, run without `--files` or follow up with a vault-wide lint.
-
-### Step 5.6: Update page scores
-
-After validation passes:
-
-1. **Update counters** — increment `access_count` in `.stats.json` for every existing wiki page that was read during cross-linking in Steps 3–4. Use a single read-modify-write cycle to avoid partial updates.
-
-2. **Score affected pages** — run the scoring script on all pages created and updated in this ingest:
-
-```bash
-python <skill-dir>/scripts/score_pages.py <vault-path> --pages <page1.md> <page2.md> ... --json
-```
-
-This computes scores using the latest counters and cross-reference data. New pages start with a low computed score (since they have no access history), which will increase as they get queried and referenced.
-
-### Batch ingestion
-
-When ingesting multiple sources at once, process them in a single pass to maximize cross-referencing. Read all sources first, then compile pages that synthesize across sources rather than creating isolated summaries.
-
-### Mass update safeguard
-
-If an ingest or update operation would modify more than 10 existing wiki pages, pause and list the affected pages for the user before proceeding. Large-scale updates are more likely to introduce drift or unintended changes, so the human should confirm the scope. This doesn't apply to creating new pages — only to modifying existing ones.
-
----
-
-## Document Extraction
-
-The wiki handles plain markdown, text, and code files natively. For all other formats (PDF, DOCX, PPTX, XLSX, images, HTML, and more), there are two extraction approaches. Extracted markdown files are stored in `raw/extracted/` — the originals in `raw/` are never modified.
-
-> **Note:** `<skill-dir>` in the commands below refers to the directory containing this SKILL.md file.
-
-### Approach 1: Docling extraction (recommended for large or complex documents)
-
-Use the extraction script bundled with the skill. It uses [Docling](https://github.com/docling-project/docling) with optimized settings: accurate table structure recognition, OCR for scanned pages, and 2x image resolution.
-
-```bash
-pip install docling pip-system-certs
-```
-
-```bash
-# Output goes to raw/extracted/<filename>.md by default
-python <skill-dir>/scripts/extract.py <input-file>
-
-# Or specify an explicit output path
-python <skill-dir>/scripts/extract.py <input-file> <output-markdown>
-```
-
-For native-text PDFs where OCR is unnecessary, disable it for faster processing:
-
-```bash
-python <skill-dir>/scripts/extract.py --no-ocr <input-file>
-```
-
-The script auto-detects file type and routes to Docling for conversion. For plain text, markdown, and code files, it reads them directly without Docling. There is no hard file size limit — large files produce a warning but extraction proceeds.
-
-After extraction, record in the manifest:
-- `extracted`: path to the extracted file (e.g. `raw/extracted/report.pdf.md`)
-- `extraction_method`: `docling +ocr`, `docling`, or `fallback`
-
-### Approach 2: Agent direct reading (fallback)
-
-If Docling is not installed, produces unsatisfactory results, or the user prefers it, **the agent can read the source file directly** using its built-in file reading capability. Many AI agents can natively read PDFs and images. In this mode:
-
-1. Copy the source file into `raw/` as-is (no conversion step)
-2. Read the file directly using the agent's file reading tool
-3. Synthesize wiki pages from what you read
-4. Record `extraction_method: agent` in the manifest entry (no `extracted` field)
-
-This is the simplest approach and requires no Python dependencies. It works well for short documents, clean PDFs, and when the agent's native file reading is sufficient. It is less reliable for scanned documents, complex table layouts, or very large files where Docling's dedicated parsing pipeline produces better results.
-
-### Which approach to use
-
-- **Docling** when: the document has complex tables, multi-column layouts, scanned/image-based pages, or is very large. Also when you need consistent, reproducible extraction across sessions.
-- **Agent direct reading** when: Docling is not installed, the document is short and clean, or the user asks you to read the file directly.
-- If Docling extraction produces poor results for a specific file, fall back to agent direct reading for that file and note it in the log.
-
-If neither approach is available (no Docling, agent cannot read the format), tell the user what to install:
-
-> I need the Docling library to extract text from this .docx file. Install it with:
-> `pip install docling pip-system-certs`
-
-### Scanning for extraction work
-
-Use the scan script to find files that need extraction, retry failed extractions, or re-extract low-quality results:
-
-```bash
-# One-shot scan — reports what needs attention
-python <skill-dir>/scripts/scan.py <vault-path>
-
-# JSON output for agent consumption
-python <skill-dir>/scripts/scan.py <vault-path> --json
-
-# Periodic scanning (every 5 minutes)
-python <skill-dir>/scripts/scan.py <vault-path> --watch 300
-
-# Scan and automatically extract all findings
-python <skill-dir>/scripts/scan.py <vault-path> --auto-extract
-```
-
-The scan detects:
-- **New files**: in `raw/` but not in `.manifest.json` and not yet extracted
-- **Failed extractions**: in manifest but extracted file is missing
-- **Low quality**: extracted file is suspiciously small relative to source (<1% size ratio or nearly empty)
-- **Modified sources**: file hash differs from what's recorded in manifest
-
----
-
-## Query
-
-When the user asks a question about the wiki's knowledge:
-
-1. **Search**: If the index is available, use hybrid search for best results:
-   ```bash
-   python <skill-dir>/scripts/index.py query <vault-path> "user's question" --json
-   ```
-   This combines vector similarity + keyword search with reciprocal rank fusion (RRF). Results include chunk excerpts, scores, and staleness flags. If the index is not available, fall back to reading `index.md` and using grep/glob.
-
-   **Attribute filtering**: Narrow the search with frontmatter filters:
-   ```bash
-   python <skill-dir>/scripts/query_filter.py <vault-path> --where "type=concept tag=strategy" --json
-   ```
-
-2. **Rank by score**: Sort candidate pages by `computed_score` descending (from frontmatter). Prioritize reading high-scored pages first — they represent the most valued content in the wiki.
-3. **Retrieve**: Read the relevant wiki pages, starting with the highest-scored candidates. Pay attention to staleness flags — stale pages have new timeline entries that haven't been synthesized into compiled truth yet.
-4. **Synthesize**: Answer the question using the wiki's compiled knowledge. When multiple pages cover the same topic, give more weight to higher-scored pages. Cite sources with `[[wikilinks]]` — list higher-scored sources first.
-5. **Update counters**: After the query completes:
-   - Increment `access_count` in `.stats.json` for every wiki page **read** during this query.
-   - Increment `query_count` in `.stats.json` for every wiki page **cited in the answer**.
-6. **File the answer**: Save the answer as a wiki page under `wiki/queries/` if it synthesizes across 3+ wiki pages or reveals a non-obvious connection. Don't file simple single-page lookups. This is how the wiki compounds — queries produce new artifacts that future queries can build on. Ask the user if borderline.
-
-### Query output format
-
-```markdown
-## Answer
-
-[Synthesized answer here, citing [[Wiki Page]] sources]
-
-### Sources consulted
-- [[wiki/concepts/concept-a]] — relevant because X
-- [[wiki/entities/entity-b]] — mentioned Y
-- [[raw/articles/original-source]] — primary source for Z
-```
-
----
-
-## Lint
-
-Linting ensures wiki health. Run it periodically or when the user asks.
-
-### Checks to perform
-
-| Check | What to look for | Auto-fixable? |
-|-------|-----------------|---------------|
-| **Dead links** | `[[wikilinks]]` pointing to non-existent pages | Two-phase fix (see below) |
-| **Orphaned pages** | Pages with no incoming links | Add links from related pages or index |
-| **Stale compiled truth** | Compiled truth `updated` date older than latest timeline entry | Flag for rewrite |
-| **Unbalanced pages** | 5+ timeline entries since last compiled-truth update | Flag for review |
-| **Stale sources** | Pages whose sources have been updated since last compile | Flag for re-ingestion |
-| **Missing cross-refs** | Pages that mention concepts without linking them | Add `[[wikilinks]]` |
-| **Index drift** | Pages that exist but aren't in `index.md` | Add to index |
-| **Duplicate concepts** | Multiple pages covering the same topic | Suggest merge |
-| **Empty sections** | Pages with placeholder sections that were never filled | Flag or remove |
-| **Frontmatter issues** | Missing required fields, outdated timestamps | Fix automatically |
-| **Schema drift** | Pages using outdated frontmatter schema (missing new fields, deprecated tags) | Migrate to current schema |
-| **Score staleness** | Pages missing `computed_score` or scores not recalculated since last full lint | Yes — run full `score_pages.py` |
-
-#### Stale and unbalanced checks
-
-```bash
-python <skill-dir>/scripts/lint_links.py <vault-path> --stale --unbalanced
-```
-
-**Stale pages** have new evidence (timeline entries) that hasn't been synthesized into compiled truth yet. **Unbalanced pages** have accumulated many timeline entries without a compiled-truth rewrite, signaling drift that needs human review.
-
-#### Dead link resolution (two-phase)
-
-Run `python <skill-dir>/scripts/lint_links.py <vault-path> --json` to get a structured report, then process in order:
-
-**Phase 1 — Alias mismatches:** The dead link text matches an existing page's `aliases` frontmatter. Rewrite the link to use pipe syntax (e.g., `[[artificial-intelligence|AI]]` instead of `[[AI]]`). Run lint_links.py with `--fix` to auto-apply these rewrites.
-
-**Phase 2 — Stub creation:** The link matches no filename and no alias. Create a stub page (`status: stub`) using the template from Ingest Step 4.
-
-Always run Phase 1 before Phase 2 — some apparent "missing pages" are actually alias mismatches that resolve to existing pages.
-
-#### Score recalculation
-
-Run a full scoring recalc as part of every lint:
-
-```bash
-python <skill-dir>/scripts/score_pages.py <vault-path> --json
-```
-
-Include the scoring summary in the lint report:
-- Top 10 pages by score
-- Pages with zero activity (no queries, no access, no incoming links, no manual weight)
-
-### Lint output
-
-Save a report to `wiki/lint-YYYY-MM-DD.md`:
-
-```markdown
-# Lint Report — YYYY-MM-DD
-
-## Summary
-- X issues found, Y auto-fixed, Z need attention
-
-## Auto-fixed
-- Added [[missing-page]] stub (dead link from [[source-page]])
-- Updated index.md with 3 missing entries
-
-## Needs Attention
-- [[concept-a]] and [[concept-b]] appear to cover the same topic — consider merging
-- [[entity-x]] has no incoming links and unclear relevance
-
-## Scoring Summary
-- Top: [[highest-scored-page]] (score: 9.2), [[second-page]] (score: 8.1), ...
-- X pages with zero activity — consider reviewing or archiving
-```
-
-Also append to `log.md`.
-
----
-
-## Change Detection and Auto-Update
-
-The wiki automatically detects and ingests changes — the user just drops files into `raw/` and the agent handles the rest.
-
-### Auto-ingest (on conversation start)
-
-At the start of each conversation where the wiki is in scope, scan for changes and **ingest them automatically**:
-
-1. **Run a scan** — use `python <skill-dir>/scripts/scan.py <vault-path> --json` to get a structured report of new, failed, and low-quality extractions.
-2. **New files in `raw/`** not yet in `.manifest.json` → extract (if binary format) and ingest them. Extracted markdown goes to `raw/extracted/`.
-3. **Modified sources** (compare file hashes to `.manifest.json`) → re-extract and re-ingest them using diff-based processing
-4. **Failed or low-quality extractions** — if a file in the manifest has no extracted file or an unusually small one, retry extraction. You can run `python <skill-dir>/scripts/scan.py <vault-path> --json` to get a structured report of all extraction issues.
-
-Briefly report what was processed:
-
-> Auto-ingested 2 new files and re-ingested 1 modified source. Created 5 wiki pages, updated 2.
-
-For each ingested file, follow the full Ingest workflow (Steps 1–5.5), including post-ingest link validation. No user confirmation is needed for auto-ingest — **except** when the mass update safeguard applies (modifying >10 existing pages). In that case, pause and list the affected pages before proceeding.
-
-### Explicit triggers
-
-The user can also run operations manually by asking you to ingest, query, or lint. Additionally, if the user asks for a lint after auto-ingest completes, run it.
-
-### Continuous monitoring (optional setup)
-
-For teams that want periodic detection between conversations, run `scripts/scan.py <vault-path> --watch 300` to re-scan the `raw/` directory every 5 minutes. Use `--auto-extract` to automatically extract new files. The user can run this in a terminal tab or cron job.
-
-The watcher logs detected changes so the next conversation's auto-ingest picks them up immediately.
-
----
-
-## Cascading Updates
-
-When a source is re-ingested (because it was modified), use diff-based re-ingestion to minimize work and token usage:
-
-### Step 1: Diff the source
-
-Compare the old snapshot against the new version to understand exactly what changed. Use the bundled diff script:
-
-```bash
-python <skill-dir>/scripts/diff_sources.py <source>.snapshot.md <new-source> --json
-```
-
-This produces a structured diff showing added/removed/changed sections and unchanged sections. If no snapshot exists (legacy source ingested before snapshots were introduced), fall back to reading the entire source.
-
-### Step 2: Scope the update
-
-Based on the diff:
-- **Added sections**: May introduce new concepts/entities → check if new wiki pages are needed
-- **Removed sections**: May obsolete claims in existing wiki pages → check and remove
-- **Changed sections**: Update the specific claims/facts in affected wiki pages
-- **Unchanged sections**: Skip entirely — don't re-read or re-process these
-
-### Step 3: Update affected pages
-
-1. **Identify affected pages**: Check `.manifest.json` for which wiki pages were generated from this source
-2. **Update wiki pages**: Modify only the parts that correspond to changed sections. Don't regenerate from scratch — preserve manually added content and links from other sources
-3. **Follow the link graph**: Check pages that link to the updated pages. If the changes affect their content (e.g., a renamed concept, a corrected fact), update those too
-
-### Step 4: Validate and finalize
-
-1. **Validate links**: Run `python <skill-dir>/scripts/lint_links.py <vault-path> --files <modified-pages...> --json` on all pages modified in this update. Fix any alias mismatches with `--fix` and create stubs for missing targets before proceeding.
-2. **Save new snapshot**: Overwrite `<source>.snapshot.md` with the new content
-3. **Update `.manifest.json`**: New hash, timestamp, and updated page lists
-4. **Update `index.md`**: Refresh summaries for modified pages
-5. **Append to `log.md`**: Record what changed using the diff summary (e.g., "3 sections changed, 1 added") — only after validation passes
-
-The depth of cascading depends on the nature of the change:
-- **Factual correction**: Update the page + any pages that cite the corrected fact
-- **New information added**: Update the page + pages that would benefit from the new info
-- **Structural change** (renamed concept, merged topics): Follow all incoming links and update references
-
----
-
-## Deleting and Archiving
-
-When the user wants to remove a source or wiki page:
-
-### Removing a source
-1. Delete (or move to an `_archive/` directory) the source file from `raw/`
-2. Remove its entry from `.manifest.json`
-3. Check `pages_created` from the manifest entry — for each page that was solely derived from this source (no other sources listed in its frontmatter), either delete it or set `status: archived`
-4. For pages that had multiple sources, remove references to the deleted source but keep the page
-5. Run an orphan check — follow links from deleted/archived pages and fix any dangling references
-6. Update `index.md` and append to `log.md`
-
-### Archiving wiki pages
-Set `status: archived` in frontmatter rather than deleting. This preserves link history and allows recovery. Archived pages can be excluded from queries by checking the status field.
+Never deviate from this heading format — consistency enables grep-based parsing.
 
 ---
 
 ## Best Practices
 
-### Writing wiki pages
-- Lead with a one-sentence summary — readers (and future LLM queries) scan this first
-- Use `[[wikilinks]]` liberally — connections are the wiki's primary value
-- Include provenance: which source said what, and when
-- Mark uncertain claims: "According to [[source]], X (unverified)" or use `status: needs-review` in frontmatter
-- Keep pages focused on one concept/entity — split if a page covers too much
-
-### Managing the wiki
-- The human decides what to ingest and what questions to ask. The LLM handles the bookkeeping.
-- Don't over-organize upfront — let the taxonomy emerge from the content
-- Use `log.md` to understand the wiki's history without reading every page
-- The manifest is the source of truth for what's been processed
-
 ### Session scoping
-Each conversation session should have a clear scope — don't try to re-process the entire wiki every time. Check `log.md` to understand what's already been done, and focus on what's new or changed since the last operation. This prevents infinite reprocessing loops where the agent keeps finding "improvements" to make. If the user asks for a comprehensive update, that's fine — but don't initiate one unprompted.
+Each conversation should have a clear scope — don't re-process the entire wiki every time. Check `log.md` to understand what's been done, and focus on what's new or changed. This prevents infinite reprocessing loops. A comprehensive update is fine if the user asks — but don't initiate one unprompted.
 
 ### Concurrent access
-This skill assumes single-writer access to the vault. If multiple agents or users edit the wiki simultaneously, `.manifest.json` and `index.md` can have write conflicts. For teams, coordinate so only one session modifies the wiki at a time, or use git branching to merge changes.
-
-### Provenance: claims vs pages
-Use **inline footnotes** (`^[inferred]`, `^[ambiguous]`) for claim-level confidence — marking individual statements within a page. Use **frontmatter `status`** for page-level review state (`active`, `needs-review`, `stub`, `archived`). These are complementary: a page can be `status: active` while containing some `^[ambiguous]` claims.
+This skill assumes single-writer access. If multiple agents or users edit simultaneously, `.manifest.json` and `index.md` can have write conflicts. Coordinate so only one session modifies the wiki at a time, or use git branching.
 
 ### Log rotation
-When `log.md` exceeds ~100 entries, move older entries to `log-archive.md` and keep only the most recent 20 in `log.md`. This keeps conversation-start log checks cheap.
-
-### Version control for the vault
-Consider initializing git inside the vault itself (`git init` in the vault root) for version history and backup. The Obsidian Git plugin can automate commits. This is separate from any project repo the vault might live alongside.
+When `log.md` exceeds ~100 entries, move older entries to `log-archive.md` and keep only the most recent 20.
 
 ### Scaling (100+ sources, 500+ pages)
+- **Index**: When `index.md` exceeds ~200 entries, split into `index-concepts.md`, `index-entities.md`, etc., or switch to grep-based discovery
+- **Cross-linking**: Use grep to search `wiki/` for concept names rather than reading every page. Target pages in related `index.md` categories first.
+- **Lint**: Run targeted checks by default (affected pages only). Reserve full-vault lint for explicit user requests.
 
-As the wiki grows, some operations need to adapt:
-
-- **Index**: When `index.md` exceeds ~200 entries, it becomes expensive to read in full. Split into `index-concepts.md`, `index-entities.md`, etc., or switch to grep-based discovery instead of reading the whole index.
-- **Cross-linking**: The "scan existing pages for mentions" step becomes O(n). Use grep to search for the concept name across `wiki/` rather than reading every page. Target pages listed in `index.md` under related categories first.
-- **Lint**: Full lint checks are expensive at scale. Run targeted checks (e.g., just orphan detection, or just the pages affected by a recent ingest) by default. Reserve full-vault lint for explicit user requests.
-- **Manifest**: The `.manifest.json` file stays manageable — it only grows with the number of sources, not pages.
-- **Graph View**: Obsidian's graph view handles thousands of nodes well, but dense cross-linking makes it more useful at any scale.
+### Version control
+Consider `git init` inside the vault for history and backup. The Obsidian Git plugin can automate commits.
 
 ### Obsidian integration
-
-The wiki is a folder of markdown files — it works with or without Obsidian open. But Obsidian adds significant value through its linking, graph, and query features. See `references/obsidian.md` for the complete reference (URI scheme, CLI, markdown syntax, plugins).
-
-Key points:
-
-- **Wikilinks**: Use `[[page-name]]` for all internal links (not `[text](path)`). Obsidian tracks renames automatically. Link to headings with `[[page#Heading]]` and blocks with `[[page#^block-id]]`.
-- **Embeds**: Use `![[page-name]]` to embed one note inside another — useful for embedding source summaries into concept pages.
-- **Callouts**: Use `> [!type]` blocks for structured annotations — `> [!warning]` for risks, `> [!question]` for open questions, `> [!tip]` for insights. These render as styled blocks in Obsidian.
-- **Provenance markers**: Use inline footnotes to mark claim confidence: no marker = extracted from source, `^[inferred]` = LLM-synthesized, `^[ambiguous]` = sources disagree.
-- **Properties**: YAML frontmatter is queryable via Dataview. Keep `tags`, `status`, `sources`, `created`, `updated` consistent across all pages.
-- **Tags**: Use `#tags` inline or in frontmatter. Prefer lowercase-hyphenated, max 5 per page. Nested tags like `#architecture/microservices` create hierarchy.
-- **Graph View**: Obsidian automatically visualizes the wiki's link structure. Denser cross-linking = more useful graph.
-- **CLI** (v1.12.0+): If Obsidian is running, use `obsidian read`, `obsidian search`, `obsidian backlinks`, `obsidian rename` for operations that benefit from Obsidian's awareness of links. Use `obsidian rename` instead of filesystem renames to update all backlinks.
-- **URI scheme**: Use `open "obsidian://open?path=<vault-path>"` to register and open vaults. Use `obsidian://open?vault=<name>&file=<path>` to navigate to specific pages.
-- **Dataview**: If the plugin is installed, users can query pages dynamically — e.g., list all `status: needs-review` pages, or build tables from frontmatter fields.
+The wiki works as plain markdown with or without Obsidian. But Obsidian adds value through graph view, backlinks, and Dataview queries. See `references/obsidian.md` for the full reference (URI scheme, CLI, syntax, plugins).
 
 ---
 
-## Page Scoring
+## Known Limitations
 
-The wiki uses a composite scoring system to surface high-value content. Each page gets a `computed_score` in its frontmatter, computed from five indicators:
-
-### Indicators
-
-| Indicator | Type | Source | Effect |
-|-----------|------|--------|--------|
-| Query frequency | Computed | `.stats.json` `query_count` | Pages cited in query answers score higher |
-| Access count | Computed | `.stats.json` `access_count` | Pages read more often score higher |
-| Cross-reference density | Computed | Incoming `[[wikilinks]]` scanned live | Well-connected pages score higher |
-| Manual weight | Manual | `weight` frontmatter field (default: 0) | User-set additive boost |
-| Priority tags | Manual | `#pinned`, `#priority/high\|medium\|low` | Fixed bonus: pinned=+10, high=+6, medium=+3, low=+1 |
-
-### Formula
-
-```
-computed_score = (w1 * norm(query_frequency))
-              + (w2 * norm(access_count))
-              + (w3 * norm(cross_ref_density))
-              + weight
-              + tag_bonus
-```
-
-`norm()` normalizes to 0–10 relative to the max across all pages. Default weights: `w1=0.4`, `w2=0.3`, `w3=0.3` — configurable in `.stats.json`.
-
-### When scores are computed
-
-- **After ingest** (Step 5.6): Incremental — only pages created/updated in this ingest
-- **During lint**: Full recalc of all pages
-- **Manual**: Run `python <skill-dir>/scripts/score_pages.py <vault-path>` for a full recalc at any time
-
-### Counter tracking
-
-The agent updates `.stats.json` counters during operations:
-- **Query**: `access_count` for every page read; `query_count` for every page cited in the answer
-- **Ingest**: `access_count` for every existing page read during cross-linking
-
-### User controls
-
-Users can adjust scoring behavior in two ways:
-
-1. **Per-page**: Set `weight: N` in frontmatter (additive boost) or add `#pinned` / `#priority/high|medium|low` tags
-2. **Global**: Edit `.stats.json` to change `weights` (indicator multipliers) or `tag_bonuses` (per-tag values)
-
-### Index ordering
-
-`index.md` entries are sorted by `computed_score` descending within each category, with the score shown inline:
-
-```markdown
-- [[page-name]] (score: 9.2) — one-line summary
-```
-
----
-
-## Index Management
-
-The wiki can be backed by a PGlite or Postgres index for hybrid retrieval (vector + keyword search with reciprocal rank fusion). The index is a **derived cache** — deleting it is always safe, and it can be rebuilt at any time.
-
-### Setup
-
-The index requires either:
-- **PGlite sidecar** (default): Node.js 18+ required. Start with `node <skill-dir>/scripts/sidecar/server.js --data-dir <vault-path>/index`
-- **Native Postgres**: Set `DATABASE_URL` environment variable. No Node.js needed.
-
-Embeddings require one of:
-- **Local** (default): `pip install sentence-transformers` — 384-dim, CPU, no API key
-- **Remote** (any OpenAI-compatible API): Set `EMBEDDING_API_KEY` (or `OPENAI_API_KEY`) — works with OpenAI, Ollama, vLLM, Together, Groq, Azure OpenAI, DeepSeek, etc.
-- **None**: Keyword-only search (no embedding dependency)
-
-Configure remote embeddings via environment variables:
-```bash
-EMBEDDING_API_KEY=sk-...              # API key (falls back to OPENAI_API_KEY)
-EMBEDDING_BASE_URL=http://host:port/v1  # Custom endpoint (default: OpenAI)
-EMBEDDING_MODEL=text-embedding-3-small  # Model name
-EMBEDDING_DIMENSION=1536              # Override auto-detected dimension
-```
-
-### Commands
-
-```bash
-# Build index from scratch (idempotent)
-python <skill-dir>/scripts/index.py rebuild <vault-path>
-
-# Incremental sync (only re-index changed pages)
-python <skill-dir>/scripts/index.py sync <vault-path>
-
-# Hybrid search
-python <skill-dir>/scripts/index.py query <vault-path> "search query" --json
-
-# Health check
-python <skill-dir>/scripts/index.py verify <vault-path>
-```
-
-Run `sync` after every successful ingest and on conversation start. Run `verify` as part of lint.
-
----
-
-## Graph Analysis
-
-The wiki's link graph can be analyzed for structure, importance, and clusters. Requires `pip install networkx` (optional — graph features degrade gracefully without it).
-
-```bash
-# Find pages near a given page
-python <skill-dir>/scripts/graph.py <vault-path> neighbors <slug> --depth 2
-
-# Shortest path between two pages
-python <skill-dir>/scripts/graph.py <vault-path> path <from-slug> <to-slug>
-
-# Page importance ranking
-python <skill-dir>/scripts/graph.py <vault-path> centrality --metric pagerank --limit 20
-
-# Topical clusters
-python <skill-dir>/scripts/graph.py <vault-path> communities
-
-# Orphaned pages (no links in or out)
-python <skill-dir>/scripts/graph.py <vault-path> orphans
-
-# Interactive graph visualization (opens in browser)
-python <skill-dir>/scripts/graph.py <vault-path> stats --export html > wiki-graph.html
-```
-
-Graph analysis works from typed links in frontmatter (authoritative) with wikilinks in prose as fallback edges.
-
----
-
-## Bundled Resources
-
-- `references/schema.md` — Default page templates, frontmatter conventions, compiled-truth/timeline model, and typed links specification
-- `references/obsidian.md` — Obsidian operating reference: URI scheme, CLI commands, flavored markdown syntax, vault config, recommended plugins, and retrieval patterns
-- `scripts/extract.py` — Document extraction using Docling (optional dependency). Output goes to `raw/extracted/` by default.
-- `scripts/scan.py` — Scans `raw/` for new, failed, or low-quality extractions. Supports periodic scanning and auto-extraction.
-- `scripts/diff_sources.py` — Structured diff between source versions for incremental re-ingestion
-- `scripts/score_pages.py` — Computes composite page scores from query frequency, access count, cross-reference density, manual weight, and priority tags. Writes `computed_score` to page frontmatter. Supports `--pages` for incremental scoring and `--json` for structured output.
-- `scripts/lint_links.py` — Wikilink validator: scans for alias mismatches (`[[alias]]` that should be `[[filename|alias]]`) and missing link targets. Supports `--fix` for auto-repair, `--stale` / `--unbalanced` for compiled-truth health, `--json` for structured output.
-- `scripts/chunking.py` — Recursive text chunking (300 words, 50-word overlap) with page-aware mode that separates compiled truth from timeline.
-- `scripts/embeddings.py` — Embedding provider interface with null/local/remote implementations. Remote works with any OpenAI-compatible API. Configurable via `EMBEDDING_*` env vars.
-- `scripts/index.py` — Index management: rebuild, sync, query (hybrid RRF search), verify (health check).
-- `scripts/graph.py` — Graph analysis with NetworkX: neighbors, shortest path, centrality, communities, orphans. Supports Cytoscape.js HTML export.
-- `scripts/query_filter.py` — Attribute-based filtering: `--where "type=concept tag=strategy confidence>=0.7"`.
-- `scripts/expansion.py` — Multi-query expansion for better retrieval recall. Supports both Anthropic-style and OpenAI-style chat APIs. Configurable via `EXPANSION_*` env vars (falls back to `ANTHROPIC_API_KEY` or `OPENAI_API_KEY`).
-- `scripts/storage.py` — Pluggable StorageBackend protocol with FileVaultBackend (file-first, default) and DatabaseBackend (DB-first, opt-in).
+- **Staleness detection not functional**: `index.py` search results include a `stale` flag, but it currently always returns `false`. Do not rely on staleness flags — check page `updated` dates against timeline entries manually.
+- **Query expansion not integrated**: `expansion.py` must be called separately before `index.py query`. There is no single command for expanded hybrid search.
+- **DatabaseBackend unimplemented**: `storage.py` defines a `DatabaseBackend` class but all methods raise `NotImplementedError`. Use `FileVaultBackend` only.
+- **FileVaultBackend search is keyword-only**: `search_hybrid()` falls back to keyword matching. True hybrid search requires the PGlite/Postgres index via `index.py`.
+- **PGlite sidecar lacks transactions**: The HTTP sidecar auto-commits every query. `begin()`/`commit()` are no-ops. Use native Postgres if transactional consistency matters.
+- **Embedding dimension change requires schema migration**: Switching from local (384-dim) to remote embeddings (e.g. 1536-dim) requires altering the `content_chunks` table's `embedding` column. A full `index.py rebuild` is needed after changing providers.
