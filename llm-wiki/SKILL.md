@@ -237,20 +237,20 @@ Filter syntax: `type=concept`, `tag=X`, `confidence>=0.7`, `updated_since=30d`, 
 
 **If no index is available:** Fall back to reading `index.md` and using grep/glob.
 
-### Step 3: Rank and retrieve
+### Step 2: Rank and retrieve
 
 Sort candidates by `computed_score` descending (from frontmatter). Read the highest-scored pages first.
 
-### Step 4: Synthesize
+### Step 3: Synthesize
 
 Answer using the wiki's compiled knowledge. When multiple pages cover the same topic, weight higher-scored pages more. Cite sources with `[[wikilinks]]` — list higher-scored sources first.
 
-### Step 5: Update counters
+### Step 4: Update counters
 
 - Increment `access_count` in `.stats.json` for every page **read**
 - Increment `query_count` in `.stats.json` for every page **cited in the answer**
 
-### Step 6: File the answer (conditional)
+### Step 5: File the answer (conditional)
 
 Save as a page under `wiki/queries/` if the answer synthesizes across 3+ pages or reveals a non-obvious connection. Don't file simple lookups. Ask the user if borderline.
 

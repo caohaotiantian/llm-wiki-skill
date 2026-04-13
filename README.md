@@ -63,9 +63,9 @@ my-wiki/
 - **Compiled-truth + timeline page model** — Each page separates rewritable synthesis (compiled truth) from an append-only evidence trail (timeline), preventing knowledge drift over time
 - **Typed links** — Frontmatter `links:` with semantic types (`references`, `contradicts`, `depends_on`, `supersedes`, `authored_by`, `works_at`, `mentions`) for graph queries
 - **Hybrid retrieval** — Optional PGlite/Postgres index with vector + keyword search fused via reciprocal rank fusion (RRF). Configurable embedding providers (local, OpenAI-compatible, or any remote API)
-- **Graph analysis** — NetworkX-powered graph operations: neighbors, shortest path, PageRank centrality, community detection, orphan finding. Cytoscape.js HTML export for interactive visualization
+- **Graph analysis** — NetworkX-powered graph operations: neighbors, shortest path, PageRank centrality, community detection, orphan finding
 - **Attribute filtering** — Query pages by frontmatter attributes: `--where "type=concept tag=strategy confidence>=0.7"`
-- **Multi-query expansion** — Generates query paraphrases via Anthropic or OpenAI-compatible chat APIs for better retrieval recall
+- **Multi-query expansion** — Generates query paraphrases via Anthropic or OpenAI-compatible chat APIs for better retrieval recall. Integrated into search with `--expand` (fast, averaged embedding) and `--expand-thorough` (multi-query RRF) flags
 - **Pluggable storage backend** — `StorageBackend` protocol with file-first (default) and database-first implementations
 - **Provider-agnostic API** — Embeddings and expansion work with any OpenAI-compatible or Anthropic-compatible endpoint via environment variables (`EMBEDDING_BASE_URL`, `EXPANSION_BASE_URL`, etc.)
 
@@ -90,9 +90,9 @@ Then ask Claude: *"Set up a knowledge base wiki in ./my-wiki and ingest these do
 
 **Required:**
 - An AI coding agent that supports skills (Claude Code, Codex, Gemini CLI, etc.)
+- Python 3.10+ with `pyyaml` — needed for all scripts (`pip install pyyaml`)
 
 **Recommended:**
-- Python 3.10+ — needed for the extraction and scanning scripts
 - [`docling`](https://github.com/docling-project/docling) — for high-quality document extraction (PDF, DOCX, PPTX, XLSX, HTML, images, and more). Install with `pip install docling pip-system-certs`. Without it, the agent can still read files directly using its built-in capabilities.
 - Obsidian — for graph view, search, and Dataview queries. The skill works without it (it's just markdown files), but Obsidian makes the wiki much more useful.
 
@@ -112,6 +112,8 @@ llm-wiki-skill/
 │   │   ├── schema.md        # Page templates and frontmatter conventions
 │   │   └── obsidian.md      # Obsidian operating reference (URI, CLI, markdown)
 │   └── scripts/
+│       ├── frontmatter.py   # Shared YAML frontmatter parser (PyYAML)
+│       ├── db_ops.py        # Shared database operations for storage/index
 │       ├── extract.py       # Document extraction (optional Docling integration)
 │       ├── scan.py          # Scan raw/ for new, failed, or low-quality extractions
 │       ├── diff_sources.py  # Structured diff for incremental re-ingestion
@@ -120,10 +122,11 @@ llm-wiki-skill/
 │       ├── chunking.py      # Recursive text chunking for index
 │       ├── embeddings.py    # Provider-agnostic embedding interface
 │       ├── index.py         # Hybrid search index (PGlite/Postgres)
-│       ├── graph.py         # Graph analysis (NetworkX + Cytoscape export)
+│       ├── graph.py         # Graph analysis (NetworkX)
 │       ├── query_filter.py  # Attribute-based page filtering
 │       ├── expansion.py     # Multi-query expansion (Anthropic/OpenAI)
-│       └── storage.py       # Pluggable storage backend protocol
+│       ├── storage.py       # Pluggable storage backend protocol
+│       └── sidecar/         # PGlite Node.js HTTP sidecar
 ├── INSTALL.md               # Installation instructions for all agent platforms
 ├── LICENSE                  # MIT
 └── README.md                # This file
@@ -146,7 +149,7 @@ Karpathy's [original gist](https://gist.github.com/karpathy/442a6bf555914893e989
 | Obsidian integration | Tips only | Full reference: URI scheme, CLI commands, vault config, plugins |
 | Link validation | Not covered | Detects alias mismatches and missing pages; auto-fix with `--fix` |
 | Hybrid retrieval | Not covered | Vector + keyword search with RRF fusion via PGlite/Postgres |
-| Graph analysis | Not covered | PageRank, communities, shortest path, interactive visualization |
+| Graph analysis | Not covered | PageRank, communities, shortest path, orphan detection |
 | Knowledge model | Flat pages | Compiled-truth + timeline separation with staleness detection |
 | Typed links | Not covered | Semantic link types in frontmatter for graph queries |
 

@@ -63,9 +63,9 @@ my-wiki/
 - **编译真相 + 时间线页面模型** — 每个页面将可重写的综合内容（编译真相）与仅追加的证据记录（时间线）分离，防止长期知识漂移
 - **类型化链接** — Frontmatter 中的 `links:` 字段支持语义类型（`references`、`contradicts`、`depends_on`、`supersedes`、`authored_by`、`works_at`、`mentions`），用于图谱查询
 - **混合检索** — 可选的 PGlite/Postgres 索引，结合向量搜索 + 关键词搜索，通过倒数排名融合（RRF）合并结果。支持可配置的嵌入提供者（本地、OpenAI 兼容或任何远程 API）
-- **图谱分析** — 基于 NetworkX 的图谱操作：邻居查询、最短路径、PageRank 重要性排名、社区检测、孤立页面发现。支持 Cytoscape.js HTML 导出实现交互式可视化
+- **图谱分析** — 基于 NetworkX 的图谱操作：邻居查询、最短路径、PageRank 重要性排名、社区检测、孤立页面发现
 - **属性过滤** — 按 frontmatter 属性查询页面：`--where "type=concept tag=strategy confidence>=0.7"`
-- **多查询扩展** — 通过 Anthropic 或 OpenAI 兼容的聊天 API 生成查询的同义改写，提升检索召回率
+- **多查询扩展** — 通过 Anthropic 或 OpenAI 兼容的聊天 API 生成查询的同义改写，提升检索召回率。已集成到搜索命令，支持 `--expand`（快速，平均嵌入向量）和 `--expand-thorough`（多查询 RRF 融合）标志
 - **可插拔存储后端** — `StorageBackend` 协议，支持文件优先（默认）和数据库优先两种实现
 - **提供者无关的 API** — 嵌入和扩展功能支持任何 OpenAI 兼容或 Anthropic 兼容的端点，通过环境变量配置（`EMBEDDING_BASE_URL`、`EXPANSION_BASE_URL` 等）
 
@@ -90,9 +90,9 @@ cp -r llm-wiki-skill/llm-wiki .claude/skills/llm-wiki
 
 **必需：**
 - 支持技能的 AI 编程智能体（Claude Code、Codex、Gemini CLI 等）
+- Python 3.10+ 及 `pyyaml` — 所有脚本均需要（`pip install pyyaml`）
 
 **推荐：**
-- Python 3.10+ — 运行文档提取和扫描脚本所需
 - [`docling`](https://github.com/docling-project/docling) — 用于高质量文档提取（PDF、DOCX、PPTX、XLSX、HTML、图片等）。安装：`pip install docling pip-system-certs`。未安装时，智能体仍可使用内置能力直接读取文件。
 - Obsidian — 用于图谱视图、搜索和 Dataview 查询。没有它也能正常工作（本质上只是 Markdown 文件），但 Obsidian 能让 wiki 更好用。
 
@@ -112,6 +112,8 @@ llm-wiki-skill/
 │   │   ├── schema.md        # 页面模板和 frontmatter 规范
 │   │   └── obsidian.md      # Obsidian 操作参考（URI、CLI、Markdown）
 │   └── scripts/
+│       ├── frontmatter.py   # 共享 YAML frontmatter 解析器（PyYAML）
+│       ├── db_ops.py        # 共享数据库操作（存储/索引）
 │       ├── extract.py       # 文档提取（可选 Docling 集成）
 │       ├── scan.py          # 扫描 raw/ 发现新增、失败或低质量的提取
 │       ├── diff_sources.py  # 用于增量重新摄入的结构化差异
@@ -120,10 +122,11 @@ llm-wiki-skill/
 │       ├── chunking.py      # 文本递归分块
 │       ├── embeddings.py    # 提供者无关的嵌入接口
 │       ├── index.py         # 混合搜索索引（PGlite/Postgres）
-│       ├── graph.py         # 图谱分析（NetworkX + Cytoscape 导出）
+│       ├── graph.py         # 图谱分析（NetworkX）
 │       ├── query_filter.py  # 基于属性的页面过滤
 │       ├── expansion.py     # 多查询扩展（Anthropic/OpenAI）
-│       └── storage.py       # 可插拔存储后端协议
+│       ├── storage.py       # 可插拔存储后端协议
+│       └── sidecar/         # PGlite Node.js HTTP 侧车
 ├── INSTALL.md               # 各平台安装说明
 ├── LICENSE                  # MIT
 └── README.md                # 英文说明
@@ -146,7 +149,7 @@ Karpathy 的[原始 gist](https://gist.github.com/karpathy/442a6bf555914893e9891
 | Obsidian 集成 | 仅提供建议 | 完整参考：URI 方案、CLI 命令、仓库配置、插件 |
 | 链接验证 | 未涉及 | 检测别名不匹配和缺失页面；使用 `--fix` 自动修复 |
 | 混合检索 | 未涉及 | 向量 + 关键词搜索，通过 RRF 融合，基于 PGlite/Postgres |
-| 图谱分析 | 未涉及 | PageRank、社区检测、最短路径、交互式可视化 |
+| 图谱分析 | 未涉及 | PageRank、社区检测、最短路径、孤立页面检测 |
 | 知识模型 | 扁平页面 | 编译真相 + 时间线分离，支持过时检测 |
 | 类型化链接 | 未涉及 | Frontmatter 中的语义链接类型，用于图谱查询 |
 
