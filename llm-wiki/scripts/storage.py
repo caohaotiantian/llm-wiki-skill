@@ -352,46 +352,259 @@ class DatabaseBackend:
 
     Markdown is produced on demand via export_markdown().
     Requires a running database (PGlite sidecar or native Postgres).
+
+    Constructor accepts either:
+      - A ``db`` object with ``.query()`` and ``.execute()`` methods
+        (for direct use / testing).
+      - A ``db_url`` string (Postgres connection or sidecar URL) which
+        will be connected lazily on ``init()``.
     """
 
-    def __init__(self, db_url: str | None = None):
+    def __init__(self, db=None, db_url: str | None = None):
+        self._db = db
         self._db_url = db_url
         self._vault_path: Path | None = None
 
+    # -- helpers -----------------------------------------------------------
+
+    def _ensure_db(self):
+        if self._db is None:
+            raise RuntimeError(
+                "DatabaseBackend not initialised — call init() first or "
+                "pass a db object to the constructor."
+            )
+
+    @staticmethod
+    def _row_to_page(row: dict) -> Page:
+        """Convert a DB row dict to a Page dataclass."""
+        fm = row.get("frontmatter") or {}
+        if isinstance(fm, str):
+            try:
+                fm = json.loads(fm)
+            except (ValueError, TypeError):
+                fm = {}
+        return Page(
+            slug=row["slug"],
+            type=row.get("type", "concept"),
+            title=row.get("title", ""),
+            compiled_truth=row.get("compiled_truth", ""),
+            timeline=row.get("timeline", ""),
+            frontmatter=fm,
+            content_hash=row.get("content_hash", ""),
+        )
+
+    # -- StorageBackend interface ------------------------------------------
+
     def init(self, vault_path: Path) -> None:
         self._vault_path = Path(vault_path)
-        # In a full implementation, this would connect to the database
-        # and initialize the schema. For now, raise if no DB is available.
+        if self._db is None and self._db_url:
+            from index import DbClient
+            self._db = DbClient(database_url=self._db_url)
+        if self._db is None:
+            # Try environment-based auto-detection (same as index.py)
+            try:
+                from index import get_db_client
+                self._db = get_db_client()
+            except Exception:
+                pass  # Will fail on first use via _ensure_db
 
     def get_page(self, slug: str) -> Page | None:
-        raise NotImplementedError("DatabaseBackend requires a running database. Use FileVaultBackend for file-first mode.")
+        self._ensure_db()
+        from db_ops import get_page_row
+        row = get_page_row(self._db, slug)
+        if not row:
+            return None
+        return self._row_to_page(row)
 
     def put_page(self, page: Page) -> None:
-        raise NotImplementedError("DatabaseBackend requires a running database.")
+        self._ensure_db()
+        from db_ops import upsert_page_row, delete_links_from, add_link_row, replace_tags
+        content_hash = page.content_hash or _compute_content_hash(page.to_markdown())
+        upsert_page_row(
+            self._db,
+            slug=page.slug,
+            page_type=page.type,
+            title=page.title,
+            compiled_truth=page.compiled_truth,
+            timeline=page.timeline,
+            frontmatter=page.frontmatter,
+            content_hash=content_hash,
+        )
+        # Sync typed links from frontmatter
+        links = page.frontmatter.get("links", [])
+        if isinstance(links, list):
+            delete_links_from(self._db, page.slug)
+            for link in links:
+                if isinstance(link, dict):
+                    add_link_row(
+                        self._db,
+                        page.slug,
+                        link.get("target", ""),
+                        link.get("type", "references"),
+                    )
+        # Sync tags
+        tags = page.frontmatter.get("tags", [])
+        if isinstance(tags, str):
+            tags = [tags]
+        if isinstance(tags, list):
+            replace_tags(self._db, page.slug, tags)
 
     def delete_page(self, slug: str) -> None:
-        raise NotImplementedError("DatabaseBackend requires a running database.")
+        self._ensure_db()
+        from db_ops import delete_page_row
+        delete_page_row(self._db, slug)
 
     def list_pages(self, where: dict | None = None) -> list[Page]:
-        raise NotImplementedError("DatabaseBackend requires a running database.")
+        self._ensure_db()
+        from db_ops import list_page_rows
+        rows = list_page_rows(self._db, where)
+        return [self._row_to_page(r) for r in rows]
 
     def add_link(self, from_slug: str, to_slug: str, link_type: str) -> None:
-        raise NotImplementedError("DatabaseBackend requires a running database.")
+        self._ensure_db()
+        from db_ops import add_link_row
+        add_link_row(self._db, from_slug, to_slug, link_type)
 
     def get_backlinks(self, slug: str) -> list[Link]:
-        raise NotImplementedError("DatabaseBackend requires a running database.")
+        self._ensure_db()
+        from db_ops import get_backlink_rows
+        rows = get_backlink_rows(self._db, slug)
+        return [
+            Link(
+                from_slug=r["from_slug"],
+                to_slug=r["to_slug"],
+                link_type=r.get("link_type", "references"),
+            )
+            for r in rows
+        ]
 
     def search_keyword(self, query: str, limit: int = 10) -> list[SearchHit]:
-        raise NotImplementedError("DatabaseBackend requires a running database.")
+        self._ensure_db()
+        from db_ops import search_keyword_rows
+        rows = search_keyword_rows(self._db, query, limit)
+        return [
+            SearchHit(
+                page_slug=r.get("page_slug", ""),
+                chunk_text=r.get("chunk_text", ""),
+                score=float(r.get("score", 0)),
+                source=r.get("chunk_source", ""),
+            )
+            for r in rows
+        ]
 
     def search_hybrid(self, query: str, embedding: list[float] | None = None, limit: int = 10) -> list[SearchHit]:
-        raise NotImplementedError("DatabaseBackend requires a running database.")
+        self._ensure_db()
+        if embedding is None:
+            return self.search_keyword(query, limit)
+        from db_ops import search_hybrid_rows
+        rows = search_hybrid_rows(self._db, query, embedding, limit)
+        return [
+            SearchHit(
+                page_slug=r.get("page_slug", ""),
+                chunk_text=r.get("chunk_text", ""),
+                score=float(r.get("score", 0)),
+                source=r.get("chunk_source", ""),
+            )
+            for r in rows
+        ]
 
     def export_markdown(self, destination: Path) -> int:
-        raise NotImplementedError("DatabaseBackend requires a running database.")
+        self._ensure_db()
+        destination = Path(destination)
+        destination.mkdir(parents=True, exist_ok=True)
+        pages = self.list_pages()
+        count = 0
+        for page in pages:
+            file_path = destination / f"{page.slug}.md"
+            atomic_write(file_path, page.to_markdown())
+            count += 1
+        return count
 
     def sync(self) -> SyncReport:
-        raise NotImplementedError("DatabaseBackend requires a running database.")
+        """Sync filesystem wiki/ pages into the database.
+
+        Scans wiki/ for markdown files, upserts changed pages, and
+        removes DB rows for pages no longer on disk.
+        """
+        self._ensure_db()
+        from db_ops import get_page_row, upsert_page_row, delete_page_row, delete_links_from, add_link_row, replace_tags
+
+        if self._vault_path is None:
+            raise RuntimeError("Backend not initialized")
+
+        wiki_dir = self._vault_path / "wiki"
+        if not wiki_dir.is_dir():
+            return SyncReport()
+
+        # Gather current DB hashes
+        existing_rows = self._db.query("SELECT slug, content_hash FROM pages")
+        existing = {r["slug"]: r["content_hash"] for r in existing_rows}
+
+        added = 0
+        updated = 0
+        unchanged = 0
+
+        # Walk filesystem
+        disk_slugs: set[str] = set()
+        for root, dirs, files in os.walk(str(wiki_dir)):
+            dirs[:] = [d for d in dirs if not d.startswith(".")]
+            for fname in files:
+                if not fname.endswith(".md") or fname.endswith(".snapshot.md"):
+                    continue
+                full = os.path.join(root, fname)
+                slug = os.path.splitext(fname)[0]
+                disk_slugs.add(slug)
+                try:
+                    with open(full, "r", encoding="utf-8", errors="replace") as f:
+                        content = f.read()
+                except OSError:
+                    continue
+                page = _parse_page_from_markdown(slug, content)
+                new_hash = _compute_content_hash(content)
+                if existing.get(slug) == new_hash:
+                    unchanged += 1
+                    continue
+                upsert_page_row(
+                    self._db,
+                    slug=page.slug,
+                    page_type=page.type,
+                    title=page.title,
+                    compiled_truth=page.compiled_truth,
+                    timeline=page.timeline,
+                    frontmatter=page.frontmatter,
+                    content_hash=new_hash,
+                )
+                # Sync links
+                links = page.frontmatter.get("links", [])
+                if isinstance(links, list):
+                    delete_links_from(self._db, slug)
+                    for link in links:
+                        if isinstance(link, dict):
+                            add_link_row(
+                                self._db, slug,
+                                link.get("target", ""),
+                                link.get("type", "references"),
+                            )
+                # Sync tags
+                tags = page.frontmatter.get("tags", [])
+                if isinstance(tags, str):
+                    tags = [tags]
+                if isinstance(tags, list):
+                    replace_tags(self._db, slug, tags)
+
+                if slug in existing:
+                    updated += 1
+                else:
+                    added += 1
+
+        # Delete DB rows not on disk
+        deleted = 0
+        for slug in existing:
+            if slug not in disk_slugs:
+                delete_page_row(self._db, slug)
+                deleted += 1
+
+        return SyncReport(added=added, updated=updated, deleted=deleted, unchanged=unchanged)
 
 
 def get_backend(backend_name: str = "file", **kwargs) -> StorageBackend:
@@ -399,7 +612,8 @@ def get_backend(backend_name: str = "file", **kwargs) -> StorageBackend:
 
     Args:
         backend_name: "file" (default) or "database"
-        **kwargs: Passed to the backend constructor
+        **kwargs: Passed to the backend constructor.
+            For DatabaseBackend: ``db`` (object) or ``db_url`` (str).
     """
     if backend_name == "file":
         return FileVaultBackend()
