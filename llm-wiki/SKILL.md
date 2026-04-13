@@ -215,27 +215,17 @@ If an ingest would modify more than 10 existing pages, pause and list affected p
 
 When the user asks a question about the wiki's knowledge:
 
-### Step 1: Expand the query (optional)
-
-If an expansion API is configured, generate paraphrases for better recall:
-
-```bash
-python <skill-dir>/scripts/expansion.py "<question>"
-```
-
-Returns the original query plus paraphrases. Run each through search in Step 2 and merge results. If no API is configured, this returns only the original query — skip to Step 2.
-
-> **Note:** Expansion is not integrated into `index.py` — you must call it separately and search each paraphrase individually.
-
-### Step 2: Search
+### Step 1: Search (with optional expansion)
 
 **If the index is available** (PGlite or Postgres running):
 
 ```bash
 python <skill-dir>/scripts/index.py query <vault-path> "query text" --json
+python <skill-dir>/scripts/index.py query <vault-path> "query text" --expand --json
+python <skill-dir>/scripts/index.py query <vault-path> "query text" --expand-thorough --json
 ```
 
-This combines vector similarity + keyword search via reciprocal rank fusion (RRF). Results include chunk excerpts and scores.
+This combines vector similarity + keyword search via reciprocal rank fusion (RRF). Results include chunk excerpts and scores. `--expand` generates paraphrases and averages their embeddings for a single fast search. `--expand-thorough` runs separate searches per paraphrase and fuses results (slower, better recall). Both require an expansion API (see Query Expansion in Supporting Tools).
 
 **Narrow with attribute filters:**
 
@@ -483,6 +473,8 @@ python <skill-dir>/scripts/index.py verify <vault-path>               # health c
 
 Run `sync` after every successful ingest and on conversation start. Run `verify` as part of lint.
 
+**Embedding dimension changes:** `rebuild` auto-detects dimension mismatches and migrates the schema. `sync` warns and aborts if dimensions don't match — run `rebuild` to migrate.
+
 ### Graph Analysis
 
 Analyze the wiki's link structure. Requires `pip install networkx` (degrades gracefully without it). Works from typed links in frontmatter (authoritative) with wikilinks in prose as fallback edges.
@@ -520,7 +512,7 @@ python <skill-dir>/scripts/storage.py <vault-path> get-page <slug>
 python <skill-dir>/scripts/storage.py <vault-path> search "query"
 ```
 
-**DatabaseBackend**: Not yet implemented — all methods raise `NotImplementedError`. Planned for database-first workflows where the DB is authoritative and markdown is exported.
+**DatabaseBackend**: Database-first backend using PGlite or Postgres. DB is authoritative; markdown exported on demand. Supports full hybrid search (vector + keyword RRF). Constructor accepts a `db` object (from `index.py`'s `DbClient`). Shared SQL operations live in `scripts/db_ops.py`.
 
 ### Document Extraction
 
@@ -667,9 +659,5 @@ The wiki works as plain markdown with or without Obsidian. But Obsidian adds val
 
 ## Known Limitations
 
-- **Staleness detection not functional**: `index.py` search results include a `stale` flag, but it currently always returns `false`. Do not rely on staleness flags — check page `updated` dates against timeline entries manually.
-- **Query expansion not integrated**: `expansion.py` must be called separately before `index.py query`. There is no single command for expanded hybrid search.
-- **DatabaseBackend unimplemented**: `storage.py` defines a `DatabaseBackend` class but all methods raise `NotImplementedError`. Use `FileVaultBackend` only.
-- **FileVaultBackend search is keyword-only**: `search_hybrid()` falls back to keyword matching. True hybrid search requires the PGlite/Postgres index via `index.py`.
+- **FileVaultBackend search is keyword-only**: `search_hybrid()` falls back to keyword matching. True hybrid search requires the PGlite/Postgres index via `index.py` or `DatabaseBackend`.
 - **PGlite sidecar lacks transactions**: The HTTP sidecar auto-commits every query. `begin()`/`commit()` are no-ops. Use native Postgres if transactional consistency matters.
-- **Embedding dimension change requires schema migration**: Switching from local (384-dim) to remote embeddings (e.g. 1536-dim) requires altering the `content_chunks` table's `embedding` column. A full `index.py rebuild` is needed after changing providers.
