@@ -32,73 +32,17 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Any
 
+from frontmatter import parse as _parse_fm
+
 
 # ---------------------------------------------------------------------------
-# Frontmatter parsing (self-contained)
+# Frontmatter parsing
 # ---------------------------------------------------------------------------
-
-_FRONTMATTER_RE = re.compile(
-    r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", re.DOTALL
-)
 
 
 def _parse_frontmatter(content: str) -> dict[str, Any]:
-    """Minimal YAML frontmatter parser (no PyYAML dependency).
-
-    Handles: scalar values, inline lists ``[a, b]``, and block lists.
-    """
-    content = content.replace("\r\n", "\n").replace("\r", "\n")
-    m = _FRONTMATTER_RE.match(content)
-    if not m:
-        return {}
-
-    fm: dict[str, Any] = {}
-    current_key: str | None = None
-    current_list: list[str] | None = None
-
-    for line in m.group(1).splitlines():
-        # block list item
-        if current_key and re.match(r"^\s+-\s+", line):
-            val = line.strip().lstrip("- ").strip().strip("\"'")
-            if current_list is not None:
-                current_list.append(val)
-            continue
-        else:
-            # flush any pending block list
-            if current_key and current_list is not None:
-                fm[current_key] = current_list
-                current_key = None
-                current_list = None
-
-        colon = line.find(":")
-        if colon == -1:
-            continue
-        key = line[:colon].strip()
-        raw_val = line[colon + 1 :].strip()
-
-        if not key:
-            continue
-
-        # inline list
-        if raw_val.startswith("["):
-            inner = raw_val.strip("[]")
-            items = [v.strip().strip("\"'") for v in inner.split(",") if v.strip()]
-            fm[key] = items
-            current_key = None
-            current_list = None
-        elif raw_val == "" or raw_val == "~" or raw_val == "null":
-            # could be start of block list
-            current_key = key
-            current_list = []
-        else:
-            fm[key] = raw_val.strip("\"'")
-            current_key = None
-            current_list = None
-
-    # flush trailing block list
-    if current_key and current_list is not None:
-        fm[current_key] = current_list
-
+    """Parse YAML frontmatter from markdown content."""
+    fm, _ = _parse_fm(content)
     return fm
 
 
