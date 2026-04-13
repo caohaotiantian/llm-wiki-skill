@@ -12,8 +12,11 @@ in YAML: status: "true".
 
 from __future__ import annotations
 
+import os
 import re
 import sys
+import tempfile
+from pathlib import Path
 
 import yaml
 
@@ -102,3 +105,25 @@ def parse_tags(fm: dict) -> list[str]:
     if isinstance(raw, list):
         return [str(item) for item in raw if item is not None]
     return []
+
+
+def atomic_write(path: Path | str, content: str) -> None:
+    """Write content to file atomically via temp file + rename.
+
+    Creates a temp file in the same directory, writes content, then
+    atomically replaces the target. If anything fails, the temp file
+    is cleaned up and the original file is untouched.
+    """
+    path = Path(path)
+    path.parent.mkdir(parents=True, exist_ok=True)
+    fd, tmp = tempfile.mkstemp(dir=str(path.parent), suffix=".tmp")
+    try:
+        with os.fdopen(fd, "w", encoding="utf-8") as f:
+            f.write(content)
+        os.replace(tmp, str(path))
+    except BaseException:
+        try:
+            os.unlink(tmp)
+        except OSError:
+            pass
+        raise

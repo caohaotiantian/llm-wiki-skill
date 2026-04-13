@@ -225,3 +225,51 @@ class TestExtractFrontmatterBlock:
         content = "---\ntitle: Test\n...\n\nBody."
         raw = extract_frontmatter_block(content)
         assert "title: Test" in raw
+
+
+class TestAtomicWrite:
+    def test_writes_content(self, tmp_path):
+        from frontmatter import atomic_write
+        target = tmp_path / "test.md"
+        atomic_write(target, "hello world")
+        assert target.read_text() == "hello world"
+
+    def test_overwrites_existing(self, tmp_path):
+        from frontmatter import atomic_write
+        target = tmp_path / "test.md"
+        target.write_text("old content")
+        atomic_write(target, "new content")
+        assert target.read_text() == "new content"
+
+    def test_no_partial_write_on_error(self, tmp_path):
+        from frontmatter import atomic_write
+        target = tmp_path / "test.md"
+        target.write_text("original")
+
+        class FakeError(Exception):
+            pass
+
+        # Monkey-patch os.replace to simulate failure after write
+        import os as _os
+        real_replace = _os.replace
+        def failing_replace(src, dst):
+            raise FakeError("simulated failure")
+        _os.replace = failing_replace
+        try:
+            try:
+                atomic_write(target, "should not persist")
+            except FakeError:
+                pass
+            # Original file untouched
+            assert target.read_text() == "original"
+            # No temp files left
+            temps = list(tmp_path.glob("*.tmp"))
+            assert len(temps) == 0
+        finally:
+            _os.replace = real_replace
+
+    def test_creates_parent_dirs(self, tmp_path):
+        from frontmatter import atomic_write
+        target = tmp_path / "sub" / "dir" / "test.md"
+        atomic_write(target, "nested")
+        assert target.read_text() == "nested"

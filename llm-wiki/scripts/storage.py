@@ -24,7 +24,7 @@ from dataclasses import dataclass, field, asdict
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
-from frontmatter import parse as _parse_fm, parse_typed_links as _parse_typed_links_fm
+from frontmatter import parse as _parse_fm, parse_typed_links as _parse_typed_links_fm, atomic_write
 
 
 @dataclass
@@ -225,7 +225,7 @@ class FileVaultBackend:
         wiki_dir.mkdir(parents=True, exist_ok=True)
         file_path = wiki_dir / f"{page.slug}.md"
         md = page.to_markdown()
-        file_path.write_text(md, encoding="utf-8")
+        atomic_write(file_path, md)
         page.content_hash = _compute_content_hash(md)
         self._pages[page.slug] = page
 
@@ -326,7 +326,7 @@ class FileVaultBackend:
         count = 0
         for page in self._pages.values():
             file_path = destination / f"{page.slug}.md"
-            file_path.write_text(page.to_markdown(), encoding="utf-8")
+            atomic_write(file_path, page.to_markdown())
             count += 1
         return count
 

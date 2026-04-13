@@ -21,7 +21,7 @@ import re
 import sys
 from pathlib import Path
 
-from frontmatter import parse as _parse_fm, parse_aliases as _parse_aliases_fm, parse_typed_links as _parse_typed_links_fm
+from frontmatter import parse as _parse_fm, parse_aliases as _parse_aliases_fm, parse_typed_links as _parse_typed_links_fm, atomic_write
 
 
 def normalize_for_matching(name: str) -> str:
@@ -507,8 +507,7 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
             new_lines.append(modified)
 
         try:
-            with open(abs_path, "w", encoding="utf-8") as f:
-                f.writelines(new_lines)
+            atomic_write(abs_path, "".join(new_lines))
         except OSError as e:
             print(f"Warning: could not write {rel_path}: {e}", file=sys.stderr)
 
@@ -667,7 +666,7 @@ def inject_referenced_by(vault_path) -> int:
             new_content = content.rstrip("\n") + "\n\n" + block + "\n"
 
         if new_content != content:
-            fp.write_text(new_content, encoding="utf-8")
+            atomic_write(fp, new_content)
             modified += 1
 
     return modified

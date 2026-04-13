@@ -15,6 +15,8 @@ import argparse
 import sys
 import os
 
+from frontmatter import atomic_write
+
 
 def extract_with_docling(input_path: str, ocr: bool = True) -> str:
     """Extract text using the docling library with optimized settings."""
@@ -164,8 +166,7 @@ def main():
         content = extract_fallback(input_path)
         filename = os.path.basename(input_path)
         header = f"# Extracted: {filename}\n\n> Extraction method: fallback\n\n"
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(header + content)
+        atomic_write(output_path, header + content)
         print(f"Extracted {input_path} -> {output_path} (method: fallback)")
         return
 
@@ -203,8 +204,7 @@ def main():
     filename = os.path.basename(input_path)
     header = f"# Extracted: {filename}\n\n> Extraction method: {method}\n\n"
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(header + content)
+    atomic_write(output_path, header + content)
 
     print(f"Extracted {input_path} -> {output_path} (method: {method})")
 

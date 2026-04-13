@@ -20,10 +20,9 @@ import json
 import os
 import re
 import sys
-import tempfile
 from pathlib import Path
 
-from frontmatter import parse as _parse_fm, parse_tags as _parse_tags_fm
+from frontmatter import parse as _parse_fm, parse_tags as _parse_tags_fm, atomic_write
 
 
 PRIORITY_TAGS = {"pinned", "priority/high", "priority/medium", "priority/low"}
@@ -78,20 +77,10 @@ def load_stats(vault_path: Path) -> dict:
 
 
 def save_stats(vault_path: Path, stats: dict) -> None:
-    """Write .stats.json to vault root atomically (temp file + rename)."""
+    """Write .stats.json to vault root atomically."""
     stats_path = Path(vault_path) / ".stats.json"
-    fd, tmp_path = tempfile.mkstemp(dir=str(vault_path), suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(stats, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-        os.replace(tmp_path, str(stats_path))
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    content = json.dumps(stats, indent=2, ensure_ascii=False) + "\n"
+    atomic_write(stats_path, content)
 
 
 def calculate_tag_bonus(priority_tags: list[str], tag_bonuses: dict[str, int | float]) -> float:
@@ -527,7 +516,7 @@ def score_all_pages(
 
         # Write to frontmatter
         updated = write_computed_score(content, score)
-        abs_path.write_text(updated, encoding="utf-8")
+        atomic_write(abs_path, updated)
 
         results.append({"page": rel_path, "computed_score": score})
 
