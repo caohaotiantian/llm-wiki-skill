@@ -23,6 +23,8 @@ from index import (
     cmd_sync,
     cmd_query,
     cmd_verify,
+    _annotate_staleness,
+    _parse_timeline_dates,
 )
 from embeddings import NullProvider
 
@@ -399,3 +401,96 @@ def test_cmd_query_no_results(capsys):
     assert results == []
     output = capsys.readouterr().out
     assert "No results found" in output
+
+
+# ---------------------------------------------------------------------------
+# Staleness detection tests
+# ---------------------------------------------------------------------------
+
+def test_parse_timeline_dates():
+    """Extract YYYY-MM-DD dates from timeline entries."""
+    timeline = "- 2026-04-10: Created from source\n- 2026-04-12: Updated with new info\n"
+    dates = _parse_timeline_dates(timeline)
+    assert dates == ["2026-04-10", "2026-04-12"]
+
+
+def test_parse_timeline_dates_empty():
+    """No dates in timeline returns empty list."""
+    assert _parse_timeline_dates("") == []
+    assert _parse_timeline_dates("No dated entries here") == []
+
+
+def test_annotate_staleness_stale_page():
+    """Page is stale when timeline has newer dates than frontmatter updated."""
+    db = _mock_db()
+    db.query.return_value = [
+        {
+            "slug": "my-page",
+            "frontmatter": {"updated": "2026-04-01"},
+            "timeline": "- 2026-04-10: New evidence added\n",
+        }
+    ]
+    rows = [{"page_slug": "my-page", "chunk_text": "some text"}]
+    _annotate_staleness(db, rows)
+    assert rows[0]["stale"] is True
+
+
+def test_annotate_staleness_fresh_page():
+    """Page is fresh when updated date is newer than all timeline entries."""
+    db = _mock_db()
+    db.query.return_value = [
+        {
+            "slug": "my-page",
+            "frontmatter": {"updated": "2026-04-15"},
+            "timeline": "- 2026-04-10: Old entry\n",
+        }
+    ]
+    rows = [{"page_slug": "my-page", "chunk_text": "some text"}]
+    _annotate_staleness(db, rows)
+    assert rows[0]["stale"] is False
+
+
+def test_annotate_staleness_no_timeline():
+    """Page without timeline is not stale."""
+    db = _mock_db()
+    db.query.return_value = [
+        {
+            "slug": "my-page",
+            "frontmatter": {"updated": "2026-04-01"},
+            "timeline": "",
+        }
+    ]
+    rows = [{"page_slug": "my-page", "chunk_text": "some text"}]
+    _annotate_staleness(db, rows)
+    assert rows[0]["stale"] is False
+
+
+def test_annotate_staleness_no_updated_date():
+    """Page without updated date is not stale."""
+    db = _mock_db()
+    db.query.return_value = [
+        {
+            "slug": "my-page",
+            "frontmatter": {},
+            "timeline": "- 2026-04-10: Some entry\n",
+        }
+    ]
+    rows = [{"page_slug": "my-page", "chunk_text": "some text"}]
+    _annotate_staleness(db, rows)
+    assert rows[0]["stale"] is False
+
+
+def test_annotate_staleness_empty_rows():
+    """Empty rows list is handled gracefully."""
+    db = _mock_db()
+    _annotate_staleness(db, [])
+    db.query.assert_not_called()
+
+
+def test_annotate_staleness_db_failure():
+    """DB failure defaults to not-stale."""
+    db = _mock_db()
+    db.query.side_effect = Exception("connection lost")
+    rows = [{"page_slug": "my-page", "chunk_text": "some text"}]
+    _annotate_staleness(db, rows)
+    assert rows[0]["stale"] is False

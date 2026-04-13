@@ -570,11 +570,17 @@ def _upsert_page(db: DbClient, page: WikiPage, provider: EmbeddingProvider, use_
         )
 
 
+def _parse_timeline_dates(timeline_text: str) -> list[str]:
+    """Extract YYYY-MM-DD dates from timeline entry lines."""
+    return re.findall(r"^-\s+(\d{4}-\d{2}-\d{2})", timeline_text, re.MULTILINE)
+
+
 def _annotate_staleness(db: DbClient, rows: list[dict]) -> None:
     """Add a ``stale`` boolean to each result row.
 
-    A page is considered stale when its ``updated_at`` timestamp is older
-    than the most recent timeline entry stored for that page.
+    A page is stale when its frontmatter ``updated`` date is older than
+    the most recent timeline entry date.  Both are extracted from the
+    pages table (frontmatter JSONB and timeline text column).
     """
     if not rows:
         return
@@ -583,32 +589,35 @@ def _annotate_staleness(db: DbClient, rows: list[dict]) -> None:
         return
 
     try:
-        # Fetch updated_at for relevant pages
         placeholders = ", ".join(f"${i+1}" for i in range(len(slugs)))
-        ts_rows = db.query(
-            f"SELECT slug, updated_at FROM pages WHERE slug IN ({placeholders})",
+        page_rows = db.query(
+            f"SELECT slug, frontmatter, timeline FROM pages WHERE slug IN ({placeholders})",
             slugs,
         )
-        updated_map: dict[str, Any] = {r["slug"]: r["updated_at"] for r in ts_rows}
 
-        # Fetch latest timeline chunk timestamp (proxy: max chunk_index in timeline source)
-        tl_rows = db.query(
-            f"""SELECT page_slug, MAX(chunk_index) AS max_ci
-                FROM content_chunks
-                WHERE page_slug IN ({placeholders}) AND chunk_source = 'timeline'
-                GROUP BY page_slug""",
-            slugs,
-        )
-        has_timeline = {r["page_slug"] for r in tl_rows}
+        stale_map: dict[str, bool] = {}
+        for pr in page_rows:
+            slug = pr["slug"]
+            fm = pr.get("frontmatter") or {}
+            if isinstance(fm, str):
+                try:
+                    import json as _json
+                    fm = _json.loads(fm)
+                except (ValueError, TypeError):
+                    fm = {}
+            updated_str = fm.get("updated", "")
+            timeline_text = pr.get("timeline") or ""
+            timeline_dates = _parse_timeline_dates(timeline_text)
+
+            if updated_str and timeline_dates:
+                latest_timeline = max(timeline_dates)
+                stale_map[slug] = latest_timeline > str(updated_str)
+            else:
+                stale_map[slug] = False
 
         for row in rows:
             slug = row.get("page_slug")
-            # If the page has timeline content and we have an updated_at, mark
-            # stale when the page was indexed but its timeline was updated after.
-            # Without real per-entry timestamps we fall back to a simple heuristic:
-            # page is stale if it has timeline content that might be newer.
-            # For now, just mark not-stale (conservative).
-            row["stale"] = False
+            row["stale"] = stale_map.get(slug, False)
     except Exception as e:
         print(f"Warning: staleness check failed, defaulting to not-stale: {e}", file=sys.stderr)
         for row in rows:
