@@ -91,13 +91,13 @@ cp -r llm-wiki-skill/llm-wiki .claude/skills/llm-wiki
 **必需：**
 - 支持技能的 AI 编程智能体（Claude Code、Codex、Gemini CLI 等）
 - Python 3.10+ 及 `pyyaml` — 所有脚本均需要（`pip install pyyaml`）
+- Node.js 18+ 及 `@electric-sql/pglite` — 用于 PGlite 嵌入式 Postgres（搜索索引和 DatabaseBackend）
 
 **推荐：**
 - [`docling`](https://github.com/docling-project/docling) — 用于高质量文档提取（PDF、DOCX、PPTX、XLSX、HTML、图片等）。安装：`pip install docling pip-system-certs`。未安装时，智能体仍可使用内置能力直接读取文件。
 - Obsidian — 用于图谱视图、搜索和 Dataview 查询。没有它也能正常工作（本质上只是 Markdown 文件），但 Obsidian 能让 wiki 更好用。
 
-**可选（高级功能）：**
-- Node.js 18+ — 用于 PGlite 嵌入式 Postgres 索引（混合检索）
+**可选：**
 - `sentence-transformers` — 用于本地 CPU 嵌入（无需 API 密钥）
 - `networkx` — 用于图谱分析（重要性排名、社区检测、路径查找）
 - 任何 OpenAI 兼容或 Anthropic 兼容的 API — 用于远程嵌入和多查询扩展。通过 `EMBEDDING_BASE_URL` / `EXPANSION_BASE_URL` 环境变量配置。

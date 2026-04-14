@@ -31,11 +31,14 @@ When the user asks to set up a new wiki:
 
 1. **Ask language preference** — store in `.manifest.json` as `"language": "<code>"` (e.g. `"zh-CN"`, `"en"`). All wiki content uses this language; technical terms and proper nouns stay in their original language. Default to the user's current language if unspecified.
 
-2. **Check dependencies** — verify optional packages:
+2. **Check dependencies** — verify required and optional packages:
    ```python
-   python3 -c "import yaml; import docling; import pip_system_certs; print('OK')"
+   python3 -c "import yaml; print('Python OK')"
    ```
-   `pyyaml` is required (used by all scripts for frontmatter parsing). `docling` and `pip-system-certs` are optional — the skill works without them. Ask before installing into a venv:
+   ```bash
+   node -e "console.log('Node.js OK')"
+   ```
+   `pyyaml` and Node.js 18+ are required. `docling` and `pip-system-certs` are optional (document extraction). Ask before installing into a venv:
    ```bash
    python3 -m venv <vault-path>/.venv
    <vault-path>/.venv/bin/pip install pyyaml docling pip-system-certs
@@ -56,9 +59,20 @@ When the user asks to set up a new wiki:
 
 4. **Initialize files** — create `index.md`, `log.md`, `schema.md` (from `references/schema.md`), `.manifest.json`, `.stats.json` with their initial content (see Coordination Files section for schemas).
 
-5. **Register with Obsidian** (if installed): `open "obsidian://open?path=<vault-path>"`
+5. **Start PGlite sidecar** — required for search index and DatabaseBackend:
+   ```bash
+   node <skill-dir>/scripts/sidecar/server.js --data-dir <vault-path>/index
+   ```
+   This auto-initializes the schema on first run. Listens on port 5488 by default.
 
-6. **Gitignore** the vault directory if inside a tracked repo.
+6. **Build the search index:**
+   ```bash
+   python <skill-dir>/scripts/index.py rebuild <vault-path>
+   ```
+
+7. **Register with Obsidian** (if installed): `open "obsidian://open?path=<vault-path>"`
+
+8. **Gitignore** the vault directory if inside a tracked repo.
 
 The subdirectories under both `raw/` and `wiki/` are **not prescribed** — they emerge from the content. The agent discovers files by scanning recursively. Common patterns include `concepts/`, `entities/`, `topics/`, `sources/`, `queries/` — but let the content dictate the taxonomy.
 
@@ -448,9 +462,9 @@ python <skill-dir>/scripts/score_pages.py <vault-path> --json             # stru
 
 ### Search Index
 
-Hybrid retrieval (vector + keyword) backed by PGlite or Postgres. The index is a **derived cache** — deleting it is always safe and it can be rebuilt.
+Hybrid retrieval (vector + keyword) backed by PGlite (default) or native Postgres. PGlite is a required dependency — started during setup (step 5). The index is a **derived cache** — deleting it is always safe and it can be rebuilt.
 
-**Database setup** (one of):
+**Database** (one of):
 - **PGlite sidecar**: Requires Node.js 18+. Auto-initializes schema on first run. Listens on port 5488.
   ```bash
   node <skill-dir>/scripts/sidecar/server.js --data-dir <vault-path>/index
@@ -504,15 +518,15 @@ Configure via env vars: `EXPANSION_PROVIDER` (`anthropic` or `openai`), `EXPANSI
 
 `scripts/storage.py` provides a `StorageBackend` protocol abstracting page CRUD, link management, and search.
 
-**FileVaultBackend** (default): Markdown files are authoritative. Keyword search via string matching. No database dependency.
+**DatabaseBackend** (default): Database-first backend using PGlite or Postgres. DB is authoritative; markdown exported on demand. Supports full hybrid search (vector + keyword RRF), transactional batch operations, and all StorageBackend protocol methods. Shared SQL operations live in `scripts/db_ops.py`.
+
+**FileVaultBackend** (offline fallback): Markdown files are authoritative. Keyword search only (no vector search). No database dependency. Use when PGlite/Postgres is unavailable.
 
 ```bash
 python <skill-dir>/scripts/storage.py <vault-path> list-pages
 python <skill-dir>/scripts/storage.py <vault-path> get-page <slug>
 python <skill-dir>/scripts/storage.py <vault-path> search "query"
 ```
-
-**DatabaseBackend**: Database-first backend using PGlite or Postgres. DB is authoritative; markdown exported on demand. Supports full hybrid search (vector + keyword RRF). Constructor accepts a `db` object (from `index.py`'s `DbClient`). Shared SQL operations live in `scripts/db_ops.py`.
 
 ### Document Extraction
 
@@ -655,9 +669,3 @@ Consider `git init` inside the vault for history and backup. The Obsidian Git pl
 ### Obsidian integration
 The wiki works as plain markdown with or without Obsidian. But Obsidian adds value through graph view, backlinks, and Dataview queries. See `references/obsidian.md` for the full reference (URI scheme, CLI, syntax, plugins).
 
----
-
-## Known Limitations
-
-- **FileVaultBackend search is keyword-only**: `search_hybrid()` falls back to keyword matching. True hybrid search requires the PGlite/Postgres index via `index.py` or `DatabaseBackend`.
-- **PGlite sidecar lacks transactions**: The HTTP sidecar auto-commits every query. `begin()`/`commit()` are no-ops. Use native Postgres if transactional consistency matters.

@@ -91,13 +91,13 @@ Then ask Claude: *"Set up a knowledge base wiki in ./my-wiki and ingest these do
 **Required:**
 - An AI coding agent that supports skills (Claude Code, Codex, Gemini CLI, etc.)
 - Python 3.10+ with `pyyaml` — needed for all scripts (`pip install pyyaml`)
+- Node.js 18+ with `@electric-sql/pglite` — for PGlite embedded Postgres (search index and DatabaseBackend)
 
 **Recommended:**
 - [`docling`](https://github.com/docling-project/docling) — for high-quality document extraction (PDF, DOCX, PPTX, XLSX, HTML, images, and more). Install with `pip install docling pip-system-certs`. Without it, the agent can still read files directly using its built-in capabilities.
 - Obsidian — for graph view, search, and Dataview queries. The skill works without it (it's just markdown files), but Obsidian makes the wiki much more useful.
 
-**Optional (for advanced features):**
-- Node.js 18+ — for PGlite embedded Postgres index (hybrid retrieval)
+**Optional:**
 - `sentence-transformers` — for local CPU-based embeddings (no API key needed)
 - `networkx` — for graph analysis (centrality, communities, paths)
 - Any OpenAI-compatible or Anthropic-compatible API — for remote embeddings and multi-query expansion. Configure via `EMBEDDING_BASE_URL` / `EXPANSION_BASE_URL` environment variables.
