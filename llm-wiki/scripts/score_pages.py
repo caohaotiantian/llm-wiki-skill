@@ -20,8 +20,9 @@ import json
 import os
 import re
 import sys
-import tempfile
 from pathlib import Path
+
+from frontmatter import parse as _parse_fm, parse_tags as _parse_tags_fm, atomic_write
 
 
 PRIORITY_TAGS = {"pinned", "priority/high", "priority/medium", "priority/low"}
@@ -76,20 +77,10 @@ def load_stats(vault_path: Path) -> dict:
 
 
 def save_stats(vault_path: Path, stats: dict) -> None:
-    """Write .stats.json to vault root atomically (temp file + rename)."""
+    """Write .stats.json to vault root atomically."""
     stats_path = Path(vault_path) / ".stats.json"
-    fd, tmp_path = tempfile.mkstemp(dir=str(vault_path), suffix=".tmp")
-    try:
-        with os.fdopen(fd, "w", encoding="utf-8") as f:
-            json.dump(stats, f, indent=2, ensure_ascii=False)
-            f.write("\n")
-        os.replace(tmp_path, str(stats_path))
-    except BaseException:
-        try:
-            os.unlink(tmp_path)
-        except OSError:
-            pass
-        raise
+    content = json.dumps(stats, indent=2, ensure_ascii=False) + "\n"
+    atomic_write(stats_path, content)
 
 
 def calculate_tag_bonus(priority_tags: list[str], tag_bonuses: dict[str, int | float]) -> float:
@@ -98,42 +89,21 @@ def calculate_tag_bonus(priority_tags: list[str], tag_bonuses: dict[str, int | f
 
 
 def parse_weight_and_tags(content: str) -> tuple[int | float, list[str]]:
-    """Extract manual weight and priority tags from page frontmatter.
-
-    Returns (weight, priority_tags) where priority_tags is a list of
-    matching tag strings from PRIORITY_TAGS.
-    """
-    content = content.replace("\r\n", "\n").replace("\r", "\n")
-    match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content, re.DOTALL)
-    if not match:
-        return 0, []
-
-    fm = match.group(1)
+    """Extract manual weight and priority tags from page frontmatter."""
+    fm, _ = _parse_fm(content)
 
     # Parse weight
     weight: int | float = 0
-    weight_match = re.search(r"^weight:\s*(.+)$", fm, re.MULTILINE)
-    if weight_match:
+    raw_weight = fm.get("weight")
+    if raw_weight is not None:
         try:
-            val = weight_match.group(1).strip()
-            weight = float(val) if "." in val else int(val)
-        except ValueError:
+            weight = int(raw_weight) if isinstance(raw_weight, int) else float(raw_weight)
+        except (ValueError, TypeError):
             pass
 
-    # Parse tags — inline format: tags: [a, b, c]
-    priority_tags: list[str] = []
-    inline = re.search(r"^tags:\s*\[([^\]]*)\]", fm, re.MULTILINE)
-    if inline:
-        raw_tags = [t.strip().strip("\"'") for t in inline.group(1).split(",")]
-        priority_tags = [t for t in raw_tags if t in PRIORITY_TAGS]
-    else:
-        # List format: tags:\n  - a\n  - b
-        list_match = re.search(r"^tags:\s*\n((?:\s+-\s+.+\n?)+)", fm, re.MULTILINE)
-        if list_match:
-            items = re.findall(r"^\s+-\s+(.+)", list_match.group(1), re.MULTILINE)
-            priority_tags = [
-                t.strip().strip("\"'") for t in items if t.strip().strip("\"'") in PRIORITY_TAGS
-            ]
+    # Parse tags — filter to priority tags only
+    all_tags = _parse_tags_fm(fm)
+    priority_tags = [t for t in all_tags if t in PRIORITY_TAGS]
 
     return weight, priority_tags
 
@@ -546,7 +516,7 @@ def score_all_pages(
 
         # Write to frontmatter
         updated = write_computed_score(content, score)
-        abs_path.write_text(updated, encoding="utf-8")
+        atomic_write(abs_path, updated)
 
         results.append({"page": rel_path, "computed_score": score})
 

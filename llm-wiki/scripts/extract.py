@@ -2,7 +2,7 @@
 """
 Extract text content from documents into markdown.
 
-Requires: pip install docling pip-system-certs
+Requires: pip install "mineru[all]"
 
 Usage:
     python extract.py <input-file>                     # output to raw/extracted/
@@ -12,52 +12,49 @@ Usage:
 """
 
 import argparse
-import sys
+import glob
 import os
+import shutil
+import subprocess
+import sys
+import tempfile
+
+from frontmatter import atomic_write
 
 
-def extract_with_docling(input_path: str, ocr: bool = True) -> str:
-    """Extract text using the docling library with optimized settings."""
-    from docling.document_converter import DocumentConverter, PdfFormatOption
-    from docling.datamodel.base_models import InputFormat
-    from docling.datamodel.pipeline_options import (
-        PdfPipelineOptions,
-        TableStructureOptions,
-        TableFormerMode,
-    )
-
-    ext = os.path.splitext(input_path)[1].lower()
-
-    # Configure PDF pipeline for best quality
-    pdf_options = PdfPipelineOptions()
-    pdf_options.do_ocr = ocr
-    pdf_options.do_table_structure = True
-    pdf_options.table_structure_options = TableStructureOptions(
-        do_cell_matching=True,
-        mode=TableFormerMode.ACCURATE,
-    )
-    # Extract embedded pictures so markdown can reference them
-    pdf_options.generate_picture_images = True
-    pdf_options.images_scale = 2.0
-
-    format_options = {
-        InputFormat.PDF: PdfFormatOption(pipeline_options=pdf_options),
-    }
-
-    # Images use the same PDF pipeline internally
-    if ext in (".png", ".jpg", ".jpeg", ".tiff", ".bmp", ".webp"):
-        from docling.document_converter import ImageFormatOption
-        format_options[InputFormat.IMAGE] = ImageFormatOption(
-            pipeline_options=pdf_options,
+def extract_with_mineru(input_path: str, ocr: bool = True) -> str:
+    """Extract text using the MineRU CLI."""
+    if shutil.which("mineru") is None:
+        raise FileNotFoundError(
+            "mineru CLI is required for this file type. Install: pip install \"mineru[all]\""
         )
 
-    converter = DocumentConverter(format_options=format_options)
-    result = converter.convert(input_path)
-    return result.document.export_to_markdown()
+    with tempfile.TemporaryDirectory() as tmpdir:
+        cmd = ["mineru", "-p", os.path.abspath(input_path), "-o", tmpdir]
+        if ocr:
+            cmd += ["-m", "ocr"]
+        else:
+            cmd += ["-m", "txt"]
+
+        result = subprocess.run(cmd, capture_output=True, text=True)
+        if result.returncode != 0:
+            raise RuntimeError(
+                f"mineru failed (exit {result.returncode}):\n{result.stderr.strip()}"
+            )
+
+        # MineRU writes <filename>.md inside the output directory
+        md_files = glob.glob(os.path.join(tmpdir, "**", "*.md"), recursive=True)
+        if not md_files:
+            raise RuntimeError(
+                f"mineru produced no markdown output for {input_path}"
+            )
+
+        with open(md_files[0], "r", encoding="utf-8") as f:
+            return f.read()
 
 
 def extract_fallback(input_path: str) -> str:
-    """Fallback extraction for common text/code formats without docling."""
+    """Fallback extraction for common text/code formats without mineru."""
     ext = os.path.splitext(input_path)[1].lower()
 
     if ext in (".md", ".txt", ".csv", ".json", ".xml", ".yaml", ".yml"):
@@ -70,12 +67,12 @@ def extract_fallback(input_path: str) -> str:
         return f"```{ext.lstrip('.')}\n{content}\n```"
 
     raise ValueError(
-        f"Cannot extract text from {ext} files without the 'docling' library.\n"
-        f"Install it with: pip install docling pip-system-certs"
+        f"Cannot extract text from {ext} files without the 'mineru' CLI.\n"
+        f"Install it with: pip install \"mineru[all]\""
     )
 
 
-# Extensions that are handled natively (no docling needed)
+# Extensions that are handled natively (no mineru needed)
 TEXT_EXTENSIONS = {".md", ".txt", ".csv", ".json", ".xml", ".yaml", ".yml"}
 CODE_EXTENSIONS = {".py", ".js", ".ts", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".rb", ".sh"}
 NATIVE_EXTENSIONS = TEXT_EXTENSIONS | CODE_EXTENSIONS
@@ -164,12 +161,11 @@ def main():
         content = extract_fallback(input_path)
         filename = os.path.basename(input_path)
         header = f"# Extracted: {filename}\n\n> Extraction method: fallback\n\n"
-        with open(output_path, "w", encoding="utf-8") as f:
-            f.write(header + content)
+        atomic_write(output_path, header + content)
         print(f"Extracted {input_path} -> {output_path} (method: fallback)")
         return
 
-    # For all other formats, use Docling
+    # For all other formats, use MineRU
     if output_path is None:
         output_path = default_output_path(input_path)
 
@@ -187,14 +183,13 @@ def main():
         )
 
     try:
-        content = extract_with_docling(input_path, ocr=ocr)
-        method = "docling" + (" +ocr" if ocr else "")
-    except ImportError:
-        print(f"Error: The 'docling' library is required for {ext} files.")
-        print("Install it with: pip install docling pip-system-certs")
+        content = extract_with_mineru(input_path, ocr=ocr)
+        method = "mineru" + (" +ocr" if ocr else "")
+    except FileNotFoundError as e:
+        print(f"Error: {e}")
         sys.exit(1)
     except RuntimeError as e:
-        print(f"Error: docling failed to initialize (model loading issue?): {e}")
+        print(f"Error: mineru extraction failed: {e}")
         sys.exit(1)
     except Exception as e:
         print(f"Extraction failed for {input_path}: {e}")
@@ -203,8 +198,7 @@ def main():
     filename = os.path.basename(input_path)
     header = f"# Extracted: {filename}\n\n> Extraction method: {method}\n\n"
 
-    with open(output_path, "w", encoding="utf-8") as f:
-        f.write(header + content)
+    atomic_write(output_path, header + content)
 
     print(f"Extracted {input_path} -> {output_path} (method: {method})")
 

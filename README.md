@@ -31,7 +31,7 @@ You feed it source documents — markdown, PDFs, Word docs, PowerPoint, spreadsh
 my-wiki/
 ├── .obsidian/           # Obsidian recognizes this as a vault
 ├── raw/                 # Immutable source documents (the ground truth)
-│   ├── extracted/       # Docling-extracted markdown versions of binary sources
+│   ├── extracted/       # MineRU-extracted markdown versions of binary sources
 │   └── .manifest.json   # Tracks ingested sources with SHA-256 hashes
 ├── wiki/                # Synthesized knowledge pages (taxonomy emerges from content)
 ├── index.md             # Auto-maintained page catalog
@@ -57,9 +57,17 @@ my-wiki/
 - **Obsidian-native** — Uses wikilinks, callouts, embeds, frontmatter, tags, and Graph View
 - **Scaling guidance** — Strategies for 100+ sources / 500+ pages (index splitting, targeted lint, log rotation)
 - **Session scoping** — Prevents infinite reprocessing loops across conversations
-- **Optional Docling integration** — Extract text from PDFs, DOCX, PPTX, XLSX, HTML, images, and more
+- **Optional MineRU integration** — Extract text from PDFs, DOCX, images, and more
 - **Periodic scanning** — Detect new, failed, or low-quality extractions; retry automatically
 - **Link validation** — Detects alias mismatches (`[[alias]]` that should be `[[filename|alias]]`) and missing link targets. Auto-fix rewrites aliases to correct pipe syntax, preserving display text and heading anchors. Runs as post-ingest validation and during lint.
+- **Compiled-truth + timeline page model** — Each page separates rewritable synthesis (compiled truth) from an append-only evidence trail (timeline), preventing knowledge drift over time
+- **Typed links** — Frontmatter `links:` with semantic types (`references`, `contradicts`, `depends_on`, `supersedes`, `authored_by`, `works_at`, `mentions`) for graph queries
+- **Hybrid retrieval** — Optional PGlite/Postgres index with vector + keyword search fused via reciprocal rank fusion (RRF). Configurable embedding providers (local, OpenAI-compatible, or any remote API)
+- **Graph analysis** — NetworkX-powered graph operations: neighbors, shortest path, PageRank centrality, community detection, orphan finding
+- **Attribute filtering** — Query pages by frontmatter attributes: `--where "type=concept tag=strategy confidence>=0.7"`
+- **Multi-query expansion** — Generates query paraphrases via Anthropic or OpenAI-compatible chat APIs for better retrieval recall. Integrated into search with `--expand` (fast, averaged embedding) and `--expand-thorough` (multi-query RRF) flags
+- **Pluggable storage backend** — `StorageBackend` protocol with file-first (default) and database-first implementations
+- **Provider-agnostic API** — Embeddings and expansion work with any OpenAI-compatible or Anthropic-compatible endpoint via environment variables (`EMBEDDING_BASE_URL`, `EXPANSION_BASE_URL`, etc.)
 
 ## Installation
 
@@ -82,11 +90,17 @@ Then ask Claude: *"Set up a knowledge base wiki in ./my-wiki and ingest these do
 
 **Required:**
 - An AI coding agent that supports skills (Claude Code, Codex, Gemini CLI, etc.)
+- Python 3.10+ with `pyyaml` — needed for all scripts (`pip install pyyaml`)
+- Node.js 18+ with `@electric-sql/pglite` — for PGlite embedded Postgres (search index and DatabaseBackend)
 
 **Recommended:**
-- Python 3.10+ — needed for the extraction and scanning scripts
-- [`docling`](https://github.com/docling-project/docling) — for high-quality document extraction (PDF, DOCX, PPTX, XLSX, HTML, images, and more). Install with `pip install docling pip-system-certs`. Without it, the agent can still read files directly using its built-in capabilities.
+- [`mineru`](https://github.com/opendatalab/mineru) — for high-quality document extraction (PDF, DOCX, images, and more). Install with `pip install "mineru[all]"`. Without it, the agent can still read files directly using its built-in capabilities.
 - Obsidian — for graph view, search, and Dataview queries. The skill works without it (it's just markdown files), but Obsidian makes the wiki much more useful.
+
+**Optional:**
+- `sentence-transformers` — for local CPU-based embeddings (no API key needed)
+- `networkx` — for graph analysis (centrality, communities, paths)
+- Any OpenAI-compatible or Anthropic-compatible API — for remote embeddings and multi-query expansion. Configure via `EMBEDDING_BASE_URL` / `EXPANSION_BASE_URL` environment variables.
 
 ## Project Structure
 
@@ -98,10 +112,21 @@ llm-wiki-skill/
 │   │   ├── schema.md        # Page templates and frontmatter conventions
 │   │   └── obsidian.md      # Obsidian operating reference (URI, CLI, markdown)
 │   └── scripts/
-│       ├── extract.py       # Document extraction (optional Docling integration)
+│       ├── frontmatter.py   # Shared YAML frontmatter parser (PyYAML)
+│       ├── db_ops.py        # Shared database operations for storage/index
+│       ├── extract.py       # Document extraction (optional MineRU integration)
 │       ├── scan.py          # Scan raw/ for new, failed, or low-quality extractions
 │       ├── diff_sources.py  # Structured diff for incremental re-ingestion
-│       └── lint_links.py    # Wikilink validator (alias mismatches, missing pages)
+│       ├── lint_links.py    # Wikilink validator + stale/unbalanced checks + referenced-by
+│       ├── score_pages.py   # Composite page scoring
+│       ├── chunking.py      # Recursive text chunking for index
+│       ├── embeddings.py    # Provider-agnostic embedding interface
+│       ├── index.py         # Hybrid search index (PGlite/Postgres)
+│       ├── graph.py         # Graph analysis (NetworkX)
+│       ├── query_filter.py  # Attribute-based page filtering
+│       ├── expansion.py     # Multi-query expansion (Anthropic/OpenAI)
+│       ├── storage.py       # Pluggable storage backend protocol
+│       └── sidecar/         # PGlite Node.js HTTP sidecar
 ├── INSTALL.md               # Installation instructions for all agent platforms
 ├── LICENSE                  # MIT
 └── README.md                # This file
@@ -113,7 +138,7 @@ Karpathy's [original gist](https://gist.github.com/karpathy/442a6bf555914893e989
 
 | Capability | Karpathy's Gist | This Project |
 |---|---|---|
-| Document extraction (PDF, DOCX, PPTX, images, ...) | User handles manually (e.g. Obsidian Web Clipper) | Built-in via [Docling](https://github.com/docling-project/docling) |
+| Document extraction (PDF, DOCX, images, ...) | User handles manually (e.g. Obsidian Web Clipper) | Built-in via [MineRU](https://github.com/opendatalab/mineru) |
 | Change detection | Not covered | Periodic scanning + SHA-256 hash tracking in `.manifest.json` |
 | Incremental re-ingestion | Not covered | Section-level structured diffs — only changed parts are reprocessed |
 | Source-to-page dependency tracking | Not covered | `.manifest.json` maps each source to the wiki pages it produced |
@@ -123,8 +148,40 @@ Karpathy's [original gist](https://gist.github.com/karpathy/442a6bf555914893e989
 | Provenance markers | Not covered | Inline footnotes: `^[extracted]`, `^[inferred]`, `^[ambiguous]` |
 | Obsidian integration | Tips only | Full reference: URI scheme, CLI commands, vault config, plugins |
 | Link validation | Not covered | Detects alias mismatches and missing pages; auto-fix with `--fix` |
+| Hybrid retrieval | Not covered | Vector + keyword search with RRF fusion via PGlite/Postgres |
+| Graph analysis | Not covered | PageRank, communities, shortest path, orphan detection |
+| Knowledge model | Flat pages | Compiled-truth + timeline separation with staleness detection |
+| Typed links | Not covered | Semantic link types in frontmatter for graph queries |
 
-The gist also suggests features this project does not yet cover: dedicated search tooling (e.g. [qmd](https://github.com/tobi/qmd)) for large wikis, and varied output formats (Marp slide decks, matplotlib charts).
+The gist also suggests features this project does not yet cover: varied output formats (Marp slide decks, matplotlib charts).
+
+## What's New
+
+**Document extraction** — Replaced Docling with [MineRU](https://github.com/opendatalab/mineru) for higher-quality extraction of PDFs, DOCX, and images. MineRU is invoked via CLI for minimal coupling. Install with `pip install "mineru[all]"`.
+
+**Compiled-truth + timeline page model** — Each wiki page now separates rewritable synthesis (above the `---` separator) from an append-only evidence trail (below it), preventing knowledge drift over time.
+
+**Typed links** — Frontmatter `links:` field supports semantic types (`references`, `contradicts`, `depends_on`, `supersedes`, `authored_by`, `works_at`, `mentions`) for structured graph queries.
+
+**Hybrid retrieval** — New PGlite/Postgres-backed search index combining vector similarity and keyword search via reciprocal rank fusion (RRF). Supports `rebuild`, `sync`, `query`, and `verify` commands.
+
+**Provider-agnostic embeddings** — Embedding and query expansion providers are fully configurable via environment variables. Works with local models (`sentence-transformers`), OpenAI-compatible APIs, or Anthropic APIs.
+
+**Multi-query expansion** — Generates query paraphrases for better retrieval recall. Two modes: `--expand` (fast, averaged embedding) and `--expand-thorough` (multi-query RRF).
+
+**Graph analysis** — NetworkX-powered graph layer with neighborhood traversal, shortest path, PageRank/betweenness centrality, Louvain community detection, orphan finding, and Cytoscape.js HTML export.
+
+**Attribute filtering** — Query pages by frontmatter attributes: `--where "type=concept tag=strategy confidence>=0.7 updated_since=30d"`.
+
+**Pluggable storage backend** — `StorageBackend` protocol with two implementations: `FileVaultBackend` (markdown files authoritative) and `DatabaseBackend` (database authoritative, markdown exported).
+
+**Composite page scoring** — Five-indicator weighted formula (query hits, ingest freshness, edit recency, manual weight, cross-ref density) with scores stored in `.stats.json`.
+
+**Shared frontmatter parser** — All scripts now use a unified `frontmatter.py` module backed by PyYAML, replacing 6 independent regex-based parsers.
+
+**Link validation improvements** — `lint_links.py` now detects stale/unbalanced pages and injects `referenced-by` backlink blocks. Auto-fix rewrites alias mismatches to correct pipe syntax.
+
+**Batch RPC** — PGlite sidecar supports transactional multi-statement execution via `/batch` endpoint.
 
 ## Credits
 

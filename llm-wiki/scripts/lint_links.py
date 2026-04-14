@@ -21,6 +21,8 @@ import re
 import sys
 from pathlib import Path
 
+from frontmatter import parse as _parse_fm, parse_aliases as _parse_aliases_fm, parse_typed_links as _parse_typed_links_fm, atomic_write
+
 
 def normalize_for_matching(name: str) -> str:
     """Normalize a name for fuzzy matching.
@@ -34,43 +36,105 @@ def normalize_for_matching(name: str) -> str:
 
 
 def parse_frontmatter_aliases(content: str) -> list[str]:
-    """Extract aliases from YAML frontmatter without PyYAML.
+    """Extract aliases from YAML frontmatter."""
+    fm, _ = _parse_fm(content)
+    return _parse_aliases_fm(fm)
 
-    Handles both formats:
-        aliases: [a, b, c]
-        aliases:
-          - a
-          - b
-    """
-    # Normalize CRLF → LF for Windows compatibility
+
+KNOWN_LINK_TYPES = {
+    "references", "contradicts", "depends_on", "supersedes",
+    "authored_by", "works_at", "mentions",
+}
+
+
+def parse_typed_links(content: str) -> list[dict]:
+    """Extract typed links from YAML frontmatter."""
+    fm, _ = _parse_fm(content)
+    return _parse_typed_links_fm(fm)
+
+
+def _parse_updated_date(content: str) -> str | None:
+    """Extract the 'updated' date from frontmatter."""
     content = content.replace("\r\n", "\n").replace("\r", "\n")
-
-    # Extract frontmatter block (--- or ... as closing delimiter)
     match = re.match(r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content, re.DOTALL)
     if not match:
+        return None
+    m = re.search(r"^updated:\s*(\d{4}-\d{2}-\d{2})", match.group(1), re.MULTILINE)
+    return m.group(1) if m else None
+
+
+def _parse_timeline_dates(content: str) -> list[str]:
+    """Extract all dates from timeline entries (below the --- separator in body)."""
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    fm_match = re.match(r"^---\s*\n.*?\n(?:---|\.\.\.)(?:\s*\n)", content, re.DOTALL)
+    if not fm_match:
         return []
+    body = content[fm_match.end():]
+    parts = re.split(r"\n---\s*\n", body, maxsplit=1)
+    if len(parts) < 2:
+        return []
+    timeline = parts[1]
+    return re.findall(r"^-\s+(\d{4}-\d{2}-\d{2})", timeline, re.MULTILINE)
 
-    fm = match.group(1)
 
-    # Try inline format: aliases: [a, b, c] or aliases: ["Smith, John", b]
-    inline = re.search(r"^aliases:\s*\[([^\]]*)\]", fm, re.MULTILINE)
-    if inline:
-        raw = inline.group(1)
-        # Parse respecting quoted values (commas inside quotes are not delimiters)
-        aliases = []
-        for m in re.finditer(r'"([^"]*?)"|\'([^\']*?)\'|([^,\s][^,]*)', raw):
-            val = (m.group(1) or m.group(2) or m.group(3) or "").strip()
-            if val:
-                aliases.append(val)
-        return aliases
+def check_stale_pages(vault_path) -> list[dict]:
+    """Find pages whose compiled truth is older than latest timeline entry."""
+    vault_path = Path(vault_path)
+    results = []
+    wiki_dir = vault_path / "wiki"
+    if not wiki_dir.is_dir():
+        return results
+    for root, dirs, files in os.walk(str(wiki_dir)):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for fname in files:
+            if not fname.endswith(".md") or fname.endswith(".snapshot.md"):
+                continue
+            full = os.path.join(root, fname)
+            rel = os.path.relpath(full, vault_path)
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+            except OSError:
+                continue
+            updated = _parse_updated_date(content)
+            if not updated:
+                continue
+            timeline_dates = _parse_timeline_dates(content)
+            if not timeline_dates:
+                continue
+            latest = max(timeline_dates)
+            if latest > updated:
+                results.append({"page": rel, "updated": updated, "latest_timeline": latest})
+    return results
 
-    # Try list format: aliases:\n  - a\n  - b
-    list_match = re.search(r"^aliases:\s*\n((?:\s+-\s+.+\n?)+)", fm, re.MULTILINE)
-    if list_match:
-        items = re.findall(r"^\s+-\s+(.+)", list_match.group(1), re.MULTILINE)
-        return [item.strip().strip("\"'") for item in items if item.strip()]
 
-    return []
+def check_unbalanced_pages(vault_path, threshold: int = 5) -> list[dict]:
+    """Find pages with many timeline entries since last compiled-truth update."""
+    vault_path = Path(vault_path)
+    results = []
+    wiki_dir = vault_path / "wiki"
+    if not wiki_dir.is_dir():
+        return results
+    for root, dirs, files in os.walk(str(wiki_dir)):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for fname in files:
+            if not fname.endswith(".md") or fname.endswith(".snapshot.md"):
+                continue
+            full = os.path.join(root, fname)
+            rel = os.path.relpath(full, vault_path)
+            try:
+                with open(full, "r", encoding="utf-8", errors="replace") as f:
+                    content = f.read()
+            except OSError:
+                continue
+            updated = _parse_updated_date(content)
+            if not updated:
+                continue
+            timeline_dates = _parse_timeline_dates(content)
+            newer = [d for d in timeline_dates if d > updated]
+            if len(newer) >= threshold:
+                results.append({"page": rel, "updated": updated, "new_entries": len(newer)})
+    return results
 
 
 def build_resolution_index(vault_path: Path) -> dict:
@@ -443,8 +507,7 @@ def fix_alias_mismatches(vault_path: Path, mismatches: list[dict]) -> int:
             new_lines.append(modified)
 
         try:
-            with open(abs_path, "w", encoding="utf-8") as f:
-                f.writelines(new_lines)
+            atomic_write(abs_path, "".join(new_lines))
         except OSError as e:
             print(f"Warning: could not write {rel_path}: {e}", file=sys.stderr)
 
@@ -503,6 +566,112 @@ def collect_wiki_files(vault_path: Path) -> list[str]:
     return results
 
 
+def inject_referenced_by(vault_path) -> int:
+    """Inject or update '## Referenced by' blocks in wiki pages.
+
+    Scans all wiki pages for typed links (frontmatter) and wikilinks (prose),
+    builds a reverse map {target_slug: [(source_slug, link_type), ...]},
+    then injects/updates a marked block at the end of each target page.
+
+    Returns the number of pages modified.
+    """
+    vault_path = Path(vault_path)
+    wiki_dir = vault_path / "wiki"
+    if not wiki_dir.is_dir():
+        return 0
+
+    # Collect all pages
+    pages: dict[str, Path] = {}  # slug -> file path
+    for root, dirs, files in os.walk(str(wiki_dir)):
+        dirs[:] = [d for d in dirs if not d.startswith(".")]
+        for fname in files:
+            if fname.endswith(".md") and not fname.endswith(".snapshot.md"):
+                fp = Path(root) / fname
+                pages[fp.stem] = fp
+
+    # Build reverse map: target_slug -> [(source_slug, link_type), ...]
+    reverse_map: dict[str, list[tuple[str, str]]] = {}
+
+    for slug, fp in pages.items():
+        try:
+            content = fp.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        # Typed links from frontmatter
+        typed = parse_typed_links(content)
+        for link in typed:
+            target = link["target"]
+            if target == slug:
+                continue
+            reverse_map.setdefault(target, []).append((slug, link["type"]))
+
+        # Wikilinks from prose (excluding referenced-by blocks to avoid circular refs)
+        content_norm = content.replace("\r\n", "\n").replace("\r", "\n")
+        fm_match = re.match(
+            r"^---\s*\n(.*?)\n(?:---|\.\.\.)(?:\s*\n|$)", content_norm, re.DOTALL
+        )
+        body = content_norm[fm_match.end():] if fm_match else content_norm
+        # Strip referenced-by blocks before scanning
+        body = re.sub(
+            r"<!-- referenced-by:start -->.*?<!-- referenced-by:end -->",
+            "", body, flags=re.DOTALL,
+        )
+        for raw_target in WIKILINK_RE.findall(body):
+            target = extract_link_target(raw_target)
+            if not target or target == slug:
+                continue
+            # Don't duplicate if already covered by a typed link
+            existing = reverse_map.get(target, [])
+            if not any(src == slug for src, _ in existing):
+                reverse_map.setdefault(target, []).append((slug, "references"))
+
+    # Inject/update blocks
+    modified = 0
+    start_marker = "<!-- referenced-by:start -->"
+    end_marker = "<!-- referenced-by:end -->"
+
+    for target_slug, backlinks in reverse_map.items():
+        if target_slug not in pages:
+            continue
+        fp = pages[target_slug]
+
+        # Sort backlinks for deterministic output
+        backlinks_sorted = sorted(set(backlinks))
+
+        lines = []
+        lines.append(start_marker)
+        lines.append("## Referenced by")
+        lines.append("")
+        for src_slug, link_type in backlinks_sorted:
+            lines.append(f"- [[{src_slug}]] ({link_type})")
+        lines.append(end_marker)
+        block = "\n".join(lines)
+
+        try:
+            content = fp.read_text(encoding="utf-8", errors="replace")
+        except OSError:
+            continue
+
+        if start_marker in content and end_marker in content:
+            # Replace existing block
+            new_content = re.sub(
+                re.escape(start_marker) + r".*?" + re.escape(end_marker),
+                block,
+                content,
+                flags=re.DOTALL,
+            )
+        else:
+            # Append at end
+            new_content = content.rstrip("\n") + "\n\n" + block + "\n"
+
+        if new_content != content:
+            atomic_write(fp, new_content)
+            modified += 1
+
+    return modified
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Scan wiki pages for wikilink issues: alias mismatches and missing targets.",
@@ -519,6 +688,18 @@ def main():
     parser.add_argument(
         "--fix", action="store_true",
         help="Auto-fix alias mismatches by rewriting [[alias]] → [[filename|alias]]",
+    )
+    parser.add_argument(
+        "--stale", action="store_true",
+        help="Check for stale pages (compiled truth older than latest timeline)",
+    )
+    parser.add_argument(
+        "--unbalanced", action="store_true",
+        help="Check for unbalanced pages (many timeline entries without rewrite)",
+    )
+    parser.add_argument(
+        "--referenced-by", action="store_true",
+        help="Inject/update '## Referenced by' blocks in wiki pages",
     )
 
     args = parser.parse_args()
@@ -561,6 +742,34 @@ def main():
         report["summary"]["fixes_applied"] = fixes
 
     print_report(report, json_output=args.json_output)
+
+    if args.stale:
+        stale = check_stale_pages(vault_path)
+        if stale:
+            if args.json_output:
+                print(json.dumps({"stale": stale}, indent=2))
+            else:
+                print(f"STALE ({len(stale)} pages need compiled-truth update):")
+                for s in stale:
+                    print(f"  {s['page']}  updated={s['updated']}  latest_timeline={s['latest_timeline']}")
+                print()
+
+    if args.unbalanced:
+        unbalanced = check_unbalanced_pages(vault_path)
+        if unbalanced:
+            if args.json_output:
+                print(json.dumps({"unbalanced": unbalanced}, indent=2))
+            else:
+                print(f"UNBALANCED ({len(unbalanced)} pages need rewrite):")
+                for u in unbalanced:
+                    print(f"  {u['page']}  updated={u['updated']}  new_entries={u['new_entries']}")
+                print()
+
+    if args.referenced_by:
+        count = inject_referenced_by(vault_path)
+        if not args.json_output:
+            print(f"Injected/updated referenced-by blocks in {count} page(s).")
+
     sys.exit(0 if report["clean"] else 1)
 
 

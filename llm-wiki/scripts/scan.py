@@ -22,7 +22,7 @@ import time
 from pathlib import Path
 
 
-# Extensions that don't need docling extraction
+# Extensions that don't need mineru extraction
 NATIVE_EXTENSIONS = {
     ".md", ".txt", ".csv", ".json", ".xml", ".yaml", ".yml",
     ".py", ".js", ".ts", ".go", ".rs", ".java", ".c", ".cpp", ".h", ".rb", ".sh",

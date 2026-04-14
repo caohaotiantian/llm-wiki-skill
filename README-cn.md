@@ -31,7 +31,7 @@
 my-wiki/
 ├── .obsidian/           # Obsidian 将此识别为仓库
 ├── raw/                 # 不可变的源文档（真实数据来源）
-│   ├── extracted/       # Docling 提取的 Markdown 版本（针对二进制格式）
+│   ├── extracted/       # MineRU 提取的 Markdown 版本（针对二进制格式）
 │   └── .manifest.json   # 使用 SHA-256 哈希追踪已摄入的源文档
 ├── wiki/                # 综合生成的知识页面（分类从内容中自然产生）
 ├── index.md             # 自动维护的页面目录
@@ -57,9 +57,17 @@ my-wiki/
 - **Obsidian 原生** — 使用 wikilinks、callouts、嵌入、frontmatter、标签和图谱视图
 - **扩展指南** — 针对 100+ 源文档 / 500+ 页面的策略（索引拆分、定向检查、日志轮转）
 - **会话作用域** — 防止跨对话的无限重复处理循环
-- **可选 Docling 集成** — 从 PDF、DOCX、PPTX、XLSX、HTML、图片等格式提取文本
+- **可选 MineRU 集成** — 从 PDF、DOCX、图片等格式提取文本
 - **周期性扫描** — 检测新增、失败或低质量的提取，自动重试
 - **链接验证** — 检测别名不匹配（`[[别名]]` 应为 `[[文件名|别名]]`）和缺失的链接目标。自动修复将别名重写为正确的管道语法，保留显示文本和标题锚点。在摄入后验证和检查时运行。
+- **编译真相 + 时间线页面模型** — 每个页面将可重写的综合内容（编译真相）与仅追加的证据记录（时间线）分离，防止长期知识漂移
+- **类型化链接** — Frontmatter 中的 `links:` 字段支持语义类型（`references`、`contradicts`、`depends_on`、`supersedes`、`authored_by`、`works_at`、`mentions`），用于图谱查询
+- **混合检索** — 可选的 PGlite/Postgres 索引，结合向量搜索 + 关键词搜索，通过倒数排名融合（RRF）合并结果。支持可配置的嵌入提供者（本地、OpenAI 兼容或任何远程 API）
+- **图谱分析** — 基于 NetworkX 的图谱操作：邻居查询、最短路径、PageRank 重要性排名、社区检测、孤立页面发现
+- **属性过滤** — 按 frontmatter 属性查询页面：`--where "type=concept tag=strategy confidence>=0.7"`
+- **多查询扩展** — 通过 Anthropic 或 OpenAI 兼容的聊天 API 生成查询的同义改写，提升检索召回率。已集成到搜索命令，支持 `--expand`（快速，平均嵌入向量）和 `--expand-thorough`（多查询 RRF 融合）标志
+- **可插拔存储后端** — `StorageBackend` 协议，支持文件优先（默认）和数据库优先两种实现
+- **提供者无关的 API** — 嵌入和扩展功能支持任何 OpenAI 兼容或 Anthropic 兼容的端点，通过环境变量配置（`EMBEDDING_BASE_URL`、`EXPANSION_BASE_URL` 等）
 
 ## 安装
 
@@ -82,11 +90,17 @@ cp -r llm-wiki-skill/llm-wiki .claude/skills/llm-wiki
 
 **必需：**
 - 支持技能的 AI 编程智能体（Claude Code、Codex、Gemini CLI 等）
+- Python 3.10+ 及 `pyyaml` — 所有脚本均需要（`pip install pyyaml`）
+- Node.js 18+ 及 `@electric-sql/pglite` — 用于 PGlite 嵌入式 Postgres（搜索索引和 DatabaseBackend）
 
 **推荐：**
-- Python 3.10+ — 运行文档提取和扫描脚本所需
-- [`docling`](https://github.com/docling-project/docling) — 用于高质量文档提取（PDF、DOCX、PPTX、XLSX、HTML、图片等）。安装：`pip install docling pip-system-certs`。未安装时，智能体仍可使用内置能力直接读取文件。
+- [`mineru`](https://github.com/opendatalab/mineru) — 用于高质量文档提取（PDF、DOCX、图片等）。安装：`pip install "mineru[all]"`。未安装时，智能体仍可使用内置能力直接读取文件。
 - Obsidian — 用于图谱视图、搜索和 Dataview 查询。没有它也能正常工作（本质上只是 Markdown 文件），但 Obsidian 能让 wiki 更好用。
+
+**可选：**
+- `sentence-transformers` — 用于本地 CPU 嵌入（无需 API 密钥）
+- `networkx` — 用于图谱分析（重要性排名、社区检测、路径查找）
+- 任何 OpenAI 兼容或 Anthropic 兼容的 API — 用于远程嵌入和多查询扩展。通过 `EMBEDDING_BASE_URL` / `EXPANSION_BASE_URL` 环境变量配置。
 
 ## 项目结构
 
@@ -98,10 +112,21 @@ llm-wiki-skill/
 │   │   ├── schema.md        # 页面模板和 frontmatter 规范
 │   │   └── obsidian.md      # Obsidian 操作参考（URI、CLI、Markdown）
 │   └── scripts/
-│       ├── extract.py       # 文档提取（可选 Docling 集成）
+│       ├── frontmatter.py   # 共享 YAML frontmatter 解析器（PyYAML）
+│       ├── db_ops.py        # 共享数据库操作（存储/索引）
+│       ├── extract.py       # 文档提取（可选 MineRU 集成）
 │       ├── scan.py          # 扫描 raw/ 发现新增、失败或低质量的提取
 │       ├── diff_sources.py  # 用于增量重新摄入的结构化差异
-│       └── lint_links.py    # Wikilink 验证器（别名不匹配、缺失页面）
+│       ├── lint_links.py    # Wikilink 验证器 + 过时/失衡检查 + 反向引用注入
+│       ├── score_pages.py   # 页面综合评分
+│       ├── chunking.py      # 文本递归分块
+│       ├── embeddings.py    # 提供者无关的嵌入接口
+│       ├── index.py         # 混合搜索索引（PGlite/Postgres）
+│       ├── graph.py         # 图谱分析（NetworkX）
+│       ├── query_filter.py  # 基于属性的页面过滤
+│       ├── expansion.py     # 多查询扩展（Anthropic/OpenAI）
+│       ├── storage.py       # 可插拔存储后端协议
+│       └── sidecar/         # PGlite Node.js HTTP 侧车
 ├── INSTALL.md               # 各平台安装说明
 ├── LICENSE                  # MIT
 └── README.md                # 英文说明
@@ -113,7 +138,7 @@ Karpathy 的[原始 gist](https://gist.github.com/karpathy/442a6bf555914893e9891
 
 | 能力 | Karpathy 的 Gist | 本项目 |
 |------|------------------|--------|
-| 文档提取（PDF、DOCX、PPTX、图片等） | 用户手动处理（如 Obsidian Web Clipper） | 通过 [Docling](https://github.com/docling-project/docling) 内置支持 |
+| 文档提取（PDF、DOCX、图片等） | 用户手动处理（如 Obsidian Web Clipper） | 通过 [MineRU](https://github.com/opendatalab/mineru) 内置支持 |
 | 变更检测 | 未涉及 | 周期性扫描 + `.manifest.json` 中的 SHA-256 哈希追踪 |
 | 增量重新摄入 | 未涉及 | 章节级结构化差异——仅重新处理变更部分 |
 | 源文档到页面的依赖追踪 | 未涉及 | `.manifest.json` 记录每个源文档生成了哪些 wiki 页面 |
@@ -123,8 +148,40 @@ Karpathy 的[原始 gist](https://gist.github.com/karpathy/442a6bf555914893e9891
 | 来源标记 | 未涉及 | 行内脚注：`^[extracted]`、`^[inferred]`、`^[ambiguous]` |
 | Obsidian 集成 | 仅提供建议 | 完整参考：URI 方案、CLI 命令、仓库配置、插件 |
 | 链接验证 | 未涉及 | 检测别名不匹配和缺失页面；使用 `--fix` 自动修复 |
+| 混合检索 | 未涉及 | 向量 + 关键词搜索，通过 RRF 融合，基于 PGlite/Postgres |
+| 图谱分析 | 未涉及 | PageRank、社区检测、最短路径、孤立页面检测 |
+| 知识模型 | 扁平页面 | 编译真相 + 时间线分离，支持过时检测 |
+| 类型化链接 | 未涉及 | Frontmatter 中的语义链接类型，用于图谱查询 |
 
-原始 gist 还提到了本项目尚未涵盖的功能：面向大型 wiki 的专用搜索工具（如 [qmd](https://github.com/tobi/qmd)），以及多样化的输出格式（Marp 幻灯片、matplotlib 图表）。
+原始 gist 还提到了本项目尚未涵盖的功能：多样化的输出格式（Marp 幻灯片、matplotlib 图表）。
+
+## 更新日志
+
+**文档提取** — 用 [MineRU](https://github.com/opendatalab/mineru) 替换了 Docling，提供更高质量的 PDF、DOCX 和图片提取。MineRU 通过 CLI 调用，耦合度最低。安装：`pip install "mineru[all]"`。
+
+**编译真相 + 时间线页面模型** — 每个 wiki 页面现在将可重写的综合内容（`---` 分隔符上方）与仅追加的证据记录（下方）分离，防止长期知识漂移。
+
+**类型化链接** — frontmatter `links:` 字段支持语义类型（`references`、`contradicts`、`depends_on`、`supersedes`、`authored_by`、`works_at`、`mentions`），用于结构化图谱查询。
+
+**混合检索** — 基于 PGlite/Postgres 的新搜索索引，通过倒数排名融合（RRF）结合向量相似度和关键词搜索。支持 `rebuild`、`sync`、`query` 和 `verify` 命令。
+
+**供应商无关的嵌入** — 嵌入和查询扩展供应商通过环境变量完全可配置。支持本地模型（`sentence-transformers`）、OpenAI 兼容 API 或 Anthropic API。
+
+**多查询扩展** — 生成查询改写以提高检索召回率。两种模式：`--expand`（快速，平均嵌入）和 `--expand-thorough`（多查询 RRF）。
+
+**图谱分析** — 基于 NetworkX 的图谱层，支持邻域遍历、最短路径、PageRank/中介中心性、Louvain 社区检测、孤立节点发现和 Cytoscape.js HTML 导出。
+
+**属性过滤** — 通过 frontmatter 属性查询页面：`--where "type=concept tag=strategy confidence>=0.7 updated_since=30d"`。
+
+**可插拔存储后端** — `StorageBackend` 协议提供两种实现：`FileVaultBackend`（Markdown 文件为权威）和 `DatabaseBackend`（数据库为权威，Markdown 导出）。
+
+**复合页面评分** — 五指标加权公式（查询命中、摄入新鲜度、编辑时效、手动权重、交叉引用密度），评分存储在 `.stats.json` 中。
+
+**统一 frontmatter 解析器** — 所有脚本现在使用基于 PyYAML 的统一 `frontmatter.py` 模块，替换了 6 个独立的正则表达式解析器。
+
+**链接验证增强** — `lint_links.py` 现在可检测过时/不平衡页面并注入 `referenced-by` 反向链接块。自动修复将别名不匹配重写为正确的管道语法。
+
+**批量 RPC** — PGlite sidecar 支持通过 `/batch` 端点进行事务性多语句执行。
 
 ## 致谢
 
