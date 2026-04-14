@@ -84,6 +84,56 @@ class DbClient:
         if self._pg_conn is not None:
             self._pg_conn.rollback()
 
+    def batch(self, statements: list[tuple[str, list]]) -> list[dict]:
+        """Execute multiple statements in a single transaction.
+
+        Each entry is ``(sql, params_list)``.  Returns a list of result
+        dicts with ``rows`` and ``affected`` keys.
+
+        Sidecar path: single HTTP POST with ``method='batch'``.
+        Native Postgres path: BEGIN → execute each → COMMIT (ROLLBACK on error).
+        """
+        if self._pg_conn is not None:
+            # Native Postgres: explicit transaction
+            results: list[dict] = []
+            try:
+                self._pg_conn.execute("BEGIN")
+                for sql, params in statements:
+                    cur = self._pg_conn.execute(sql, params)
+                    rows = [dict(r) for r in cur.fetchall()] if cur.description else []
+                    affected = cur.rowcount if cur.rowcount >= 0 else 0
+                    results.append({"rows": rows, "affected": affected})
+                self._pg_conn.commit()
+            except Exception:
+                self._pg_conn.rollback()
+                raise
+            return results
+        else:
+            # Sidecar: single batch RPC call
+            payload: dict[str, Any] = {
+                "method": "batch",
+                "params": {
+                    "statements": [
+                        {"sql": sql, "args": args or []}
+                        for sql, args in statements
+                    ]
+                },
+            }
+            data = json.dumps(payload).encode("utf-8")
+            req = urllib.request.Request(
+                f"{self._sidecar_url}/rpc",
+                data=data,
+                headers={"Content-Type": "application/json"},
+            )
+            try:
+                with urllib.request.urlopen(req, timeout=30) as resp:
+                    result = json.loads(resp.read().decode("utf-8"))
+            except urllib.error.URLError as e:
+                raise ConnectionError(
+                    f"Cannot reach PGlite sidecar at {self._sidecar_url}: {e}"
+                ) from e
+            return result.get("results", [])
+
     def close(self):
         """Close the database connection."""
         if self._pg_conn is not None:
@@ -314,12 +364,9 @@ def cmd_rebuild(db: DbClient, vault_path: Path, provider: EmbeddingProvider) -> 
             _migrate_embedding_dim(db, provider_dim)
 
     for page in pages:
-        db.begin()
         try:
             _upsert_page(db, page, provider, use_vectors)
-            db.commit()
         except Exception as e:
-            db.rollback()
             print(f"Error indexing page: {e}", file=sys.stderr)
             raise
         print(f"  indexed: {page.slug}")
@@ -359,13 +406,7 @@ def cmd_sync(db: DbClient, vault_path: Path, provider: EmbeddingProvider) -> Non
         if existing.get(page.slug) == page.content_hash:
             skipped += 1
             continue
-        db.begin()
-        try:
-            _upsert_page(db, page, provider, use_vectors)
-            db.commit()
-        except Exception:
-            db.rollback()
-            raise
+        _upsert_page(db, page, provider, use_vectors)
         updated += 1
         print(f"  updated: {page.slug}")
 
@@ -648,11 +689,17 @@ def cmd_verify(db: DbClient, vault_path: Path) -> dict:
 # ---------------------------------------------------------------------------
 
 def _upsert_page(db: DbClient, page: WikiPage, provider: EmbeddingProvider, use_vectors: bool) -> None:
-    """Insert or update a single page and its chunks/links/tags."""
+    """Insert or update a single page and its chunks/links/tags.
+
+    All statements are collected and executed via ``db.batch()`` so they
+    run inside a single transaction.
+    """
     fm_json = json.dumps(page.frontmatter)
 
+    statements: list[tuple[str, list]] = []
+
     # Upsert page
-    db.execute(
+    statements.append((
         """INSERT INTO pages (slug, type, title, compiled_truth, timeline, frontmatter, content_hash, updated_at)
            VALUES ($1, $2, $3, $4, $5, $6::jsonb, $7, now())
            ON CONFLICT (slug) DO UPDATE SET
@@ -664,10 +711,12 @@ def _upsert_page(db: DbClient, page: WikiPage, provider: EmbeddingProvider, use_
                content_hash = EXCLUDED.content_hash,
                updated_at = now()""",
         [page.slug, page.page_type, page.title, page.compiled_truth, page.timeline, fm_json, page.content_hash],
-    )
+    ))
 
-    # Replace chunks
-    db.execute("DELETE FROM content_chunks WHERE page_slug = $1", [page.slug])
+    # Delete old chunks
+    statements.append(("DELETE FROM content_chunks WHERE page_slug = $1", [page.slug]))
+
+    # Insert new chunks
     chunked = chunk_page(page.raw_content)
     chunk_index = 0
     for source in ("compiled_truth", "timeline"):
@@ -679,39 +728,45 @@ def _upsert_page(db: DbClient, page: WikiPage, provider: EmbeddingProvider, use_
         for text, emb in zip(texts, embeddings):
             if emb is not None:
                 emb_literal = "[" + ",".join(str(x) for x in emb) + "]"
-                db.execute(
+                statements.append((
                     """INSERT INTO content_chunks (page_slug, chunk_index, chunk_source, chunk_text, embedding)
                        VALUES ($1, $2, $3, $4, $5::vector)""",
                     [page.slug, chunk_index, source, text, emb_literal],
-                )
+                ))
             else:
-                db.execute(
+                statements.append((
                     """INSERT INTO content_chunks (page_slug, chunk_index, chunk_source, chunk_text)
                        VALUES ($1, $2, $3, $4)""",
                     [page.slug, chunk_index, source, text],
-                )
+                ))
             chunk_index += 1
 
-    # Replace links
-    db.execute("DELETE FROM links WHERE from_slug = $1", [page.slug])
+    # Delete old links
+    statements.append(("DELETE FROM links WHERE from_slug = $1", [page.slug]))
+
+    # Insert new links
     seen_links: set[tuple[str, str]] = set()
     for link in page.links:
         key = (link.target, link.link_type)
         if key in seen_links:
             continue
         seen_links.add(key)
-        db.execute(
+        statements.append((
             "INSERT INTO links (from_slug, to_slug, link_type) VALUES ($1, $2, $3)",
             [page.slug, link.target, link.link_type],
-        )
+        ))
 
-    # Replace tags
-    db.execute("DELETE FROM tags WHERE page_slug = $1", [page.slug])
+    # Delete old tags
+    statements.append(("DELETE FROM tags WHERE page_slug = $1", [page.slug]))
+
+    # Insert new tags
     for tag in set(page.tags):
-        db.execute(
+        statements.append((
             "INSERT INTO tags (page_slug, tag) VALUES ($1, $2)",
             [page.slug, tag],
-        )
+        ))
+
+    db.batch(statements)
 
 
 def _parse_timeline_dates(timeline_text: str) -> list[str]:

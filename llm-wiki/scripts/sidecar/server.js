@@ -83,6 +83,22 @@ async function handleRpc(body) {
       return { affected };
     }
 
+    case "batch": {
+      if (!params.statements || !Array.isArray(params.statements)) {
+        throw new Error("Missing 'statements' array in params");
+      }
+      const results = await db.transaction(async (tx) => {
+        const out = [];
+        for (const stmt of params.statements) {
+          if (!stmt.sql) throw new Error("Each statement must have 'sql'");
+          const r = await tx.query(stmt.sql, stmt.args || []);
+          out.push({ rows: r.rows, affected: r.affectedRows ?? 0 });
+        }
+        return out;
+      });
+      return { results };
+    }
+
     default:
       throw new Error(`Unknown method: ${method}`);
   }

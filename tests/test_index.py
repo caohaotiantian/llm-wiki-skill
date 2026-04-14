@@ -29,6 +29,7 @@ from index import (
     _migrate_embedding_dim,
     _average_embeddings,
     _merge_query_results,
+    _upsert_page,
 )
 from embeddings import NullProvider
 
@@ -209,8 +210,8 @@ def test_cmd_rebuild_calls_upsert(capsys):
         )
         cmd_rebuild(db, vault, provider)
 
-    # Should have called execute for upsert, chunks, links, tags
-    assert db.execute.call_count > 0
+    # Should have called batch for upsert, chunks, links, tags
+    assert db.batch.call_count > 0
     output = capsys.readouterr().out
     assert "my-page" in output
     assert "Rebuild complete" in output
@@ -663,9 +664,8 @@ def test_sync_no_abort_when_dim_matches(capsys):
 
     err = capsys.readouterr().err
     assert "mismatch" not in err.lower()
-    out = capsys.readouterr().out + ""  # already consumed above
-    # Should have proceeded with sync (execute was called for upserts)
-    assert db.execute.call_count > 0
+    # Should have proceeded with sync (batch was called for upserts)
+    assert db.batch.call_count > 0
 
 
 # ---------------------------------------------------------------------------
@@ -814,3 +814,67 @@ def test_cmd_query_thorough_takes_precedence(capsys):
 
     err = capsys.readouterr().err
     assert "thorough" in err.lower()
+
+
+# ---------------------------------------------------------------------------
+# Batch transaction tests
+# ---------------------------------------------------------------------------
+
+def test_dbclient_batch_method_exists():
+    """Batch method exists on DbClient with correct signature."""
+    assert hasattr(DbClient, 'batch')
+    import inspect
+    sig = inspect.signature(DbClient.batch)
+    params = list(sig.parameters.keys())
+    assert "self" in params
+    assert "statements" in params
+
+
+def test_upsert_page_uses_batch():
+    """_upsert_page should call db.batch() instead of individual executes."""
+    db = _mock_db()
+    db.batch = MagicMock(return_value=[])
+    provider = NullProvider()
+
+    page = WikiPage(
+        slug="test-page",
+        path=Path("/tmp/test-page.md"),
+        title="Test Page",
+        page_type="concept",
+        compiled_truth="Some content about testing.",
+        timeline="",
+        frontmatter={"tags": ["concept"]},
+        content_hash="abc123",
+        raw_content="---\ntags: [concept]\n---\n\n# Test Page\n\nSome content about testing.",
+        links=[LinkRef(target="other-page", link_type="references")],
+        tags=["concept"],
+    )
+    _upsert_page(db, page, provider, use_vectors=False)
+
+    # Should have called batch once with multiple statements
+    db.batch.assert_called_once()
+    statements = db.batch.call_args[0][0]
+    # At minimum: upsert page, delete chunks, insert chunk(s), delete links, insert link, delete tags, insert tag
+    assert len(statements) >= 3
+    # First statement should be the page upsert
+    assert "INSERT INTO pages" in statements[0][0]
+    # Should not have called execute directly for page data
+    db.execute.assert_not_called()
+
+
+def test_cmd_rebuild_no_begin_commit():
+    """cmd_rebuild should not call begin/commit — batch handles transactions."""
+    db = _mock_db()
+    db.batch = MagicMock(return_value=[])
+    provider = NullProvider()
+
+    with tempfile.TemporaryDirectory() as tmp:
+        vault = _make_vault(
+            Path(tmp),
+            {"page.md": "---\ntags: [concept]\n---\n\n# Page\n\nContent."},
+        )
+        cmd_rebuild(db, vault, provider)
+
+    db.begin.assert_not_called()
+    db.commit.assert_not_called()
+    db.rollback.assert_not_called()
