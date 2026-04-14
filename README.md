@@ -31,7 +31,7 @@ You feed it source documents — markdown, PDFs, Word docs, PowerPoint, spreadsh
 my-wiki/
 ├── .obsidian/           # Obsidian recognizes this as a vault
 ├── raw/                 # Immutable source documents (the ground truth)
-│   ├── extracted/       # Docling-extracted markdown versions of binary sources
+│   ├── extracted/       # MineRU-extracted markdown versions of binary sources
 │   └── .manifest.json   # Tracks ingested sources with SHA-256 hashes
 ├── wiki/                # Synthesized knowledge pages (taxonomy emerges from content)
 ├── index.md             # Auto-maintained page catalog
@@ -57,7 +57,7 @@ my-wiki/
 - **Obsidian-native** — Uses wikilinks, callouts, embeds, frontmatter, tags, and Graph View
 - **Scaling guidance** — Strategies for 100+ sources / 500+ pages (index splitting, targeted lint, log rotation)
 - **Session scoping** — Prevents infinite reprocessing loops across conversations
-- **Optional Docling integration** — Extract text from PDFs, DOCX, PPTX, XLSX, HTML, images, and more
+- **Optional MineRU integration** — Extract text from PDFs, DOCX, images, and more
 - **Periodic scanning** — Detect new, failed, or low-quality extractions; retry automatically
 - **Link validation** — Detects alias mismatches (`[[alias]]` that should be `[[filename|alias]]`) and missing link targets. Auto-fix rewrites aliases to correct pipe syntax, preserving display text and heading anchors. Runs as post-ingest validation and during lint.
 - **Compiled-truth + timeline page model** — Each page separates rewritable synthesis (compiled truth) from an append-only evidence trail (timeline), preventing knowledge drift over time
@@ -94,7 +94,7 @@ Then ask Claude: *"Set up a knowledge base wiki in ./my-wiki and ingest these do
 - Node.js 18+ with `@electric-sql/pglite` — for PGlite embedded Postgres (search index and DatabaseBackend)
 
 **Recommended:**
-- [`docling`](https://github.com/docling-project/docling) — for high-quality document extraction (PDF, DOCX, PPTX, XLSX, HTML, images, and more). Install with `pip install docling pip-system-certs`. Without it, the agent can still read files directly using its built-in capabilities.
+- [`mineru`](https://github.com/opendatalab/mineru) — for high-quality document extraction (PDF, DOCX, images, and more). Install with `pip install "mineru[all]"`. Without it, the agent can still read files directly using its built-in capabilities.
 - Obsidian — for graph view, search, and Dataview queries. The skill works without it (it's just markdown files), but Obsidian makes the wiki much more useful.
 
 **Optional:**
@@ -114,7 +114,7 @@ llm-wiki-skill/
 │   └── scripts/
 │       ├── frontmatter.py   # Shared YAML frontmatter parser (PyYAML)
 │       ├── db_ops.py        # Shared database operations for storage/index
-│       ├── extract.py       # Document extraction (optional Docling integration)
+│       ├── extract.py       # Document extraction (optional MineRU integration)
 │       ├── scan.py          # Scan raw/ for new, failed, or low-quality extractions
 │       ├── diff_sources.py  # Structured diff for incremental re-ingestion
 │       ├── lint_links.py    # Wikilink validator + stale/unbalanced checks + referenced-by
@@ -138,7 +138,7 @@ Karpathy's [original gist](https://gist.github.com/karpathy/442a6bf555914893e989
 
 | Capability | Karpathy's Gist | This Project |
 |---|---|---|
-| Document extraction (PDF, DOCX, PPTX, images, ...) | User handles manually (e.g. Obsidian Web Clipper) | Built-in via [Docling](https://github.com/docling-project/docling) |
+| Document extraction (PDF, DOCX, images, ...) | User handles manually (e.g. Obsidian Web Clipper) | Built-in via [MineRU](https://github.com/opendatalab/mineru) |
 | Change detection | Not covered | Periodic scanning + SHA-256 hash tracking in `.manifest.json` |
 | Incremental re-ingestion | Not covered | Section-level structured diffs — only changed parts are reprocessed |
 | Source-to-page dependency tracking | Not covered | `.manifest.json` maps each source to the wiki pages it produced |

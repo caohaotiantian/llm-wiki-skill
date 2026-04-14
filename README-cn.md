@@ -31,7 +31,7 @@
 my-wiki/
 ├── .obsidian/           # Obsidian 将此识别为仓库
 ├── raw/                 # 不可变的源文档（真实数据来源）
-│   ├── extracted/       # Docling 提取的 Markdown 版本（针对二进制格式）
+│   ├── extracted/       # MineRU 提取的 Markdown 版本（针对二进制格式）
 │   └── .manifest.json   # 使用 SHA-256 哈希追踪已摄入的源文档
 ├── wiki/                # 综合生成的知识页面（分类从内容中自然产生）
 ├── index.md             # 自动维护的页面目录
@@ -57,7 +57,7 @@ my-wiki/
 - **Obsidian 原生** — 使用 wikilinks、callouts、嵌入、frontmatter、标签和图谱视图
 - **扩展指南** — 针对 100+ 源文档 / 500+ 页面的策略（索引拆分、定向检查、日志轮转）
 - **会话作用域** — 防止跨对话的无限重复处理循环
-- **可选 Docling 集成** — 从 PDF、DOCX、PPTX、XLSX、HTML、图片等格式提取文本
+- **可选 MineRU 集成** — 从 PDF、DOCX、图片等格式提取文本
 - **周期性扫描** — 检测新增、失败或低质量的提取，自动重试
 - **链接验证** — 检测别名不匹配（`[[别名]]` 应为 `[[文件名|别名]]`）和缺失的链接目标。自动修复将别名重写为正确的管道语法，保留显示文本和标题锚点。在摄入后验证和检查时运行。
 - **编译真相 + 时间线页面模型** — 每个页面将可重写的综合内容（编译真相）与仅追加的证据记录（时间线）分离，防止长期知识漂移
@@ -94,7 +94,7 @@ cp -r llm-wiki-skill/llm-wiki .claude/skills/llm-wiki
 - Node.js 18+ 及 `@electric-sql/pglite` — 用于 PGlite 嵌入式 Postgres（搜索索引和 DatabaseBackend）
 
 **推荐：**
-- [`docling`](https://github.com/docling-project/docling) — 用于高质量文档提取（PDF、DOCX、PPTX、XLSX、HTML、图片等）。安装：`pip install docling pip-system-certs`。未安装时，智能体仍可使用内置能力直接读取文件。
+- [`mineru`](https://github.com/opendatalab/mineru) — 用于高质量文档提取（PDF、DOCX、图片等）。安装：`pip install "mineru[all]"`。未安装时，智能体仍可使用内置能力直接读取文件。
 - Obsidian — 用于图谱视图、搜索和 Dataview 查询。没有它也能正常工作（本质上只是 Markdown 文件），但 Obsidian 能让 wiki 更好用。
 
 **可选：**
@@ -114,7 +114,7 @@ llm-wiki-skill/
 │   └── scripts/
 │       ├── frontmatter.py   # 共享 YAML frontmatter 解析器（PyYAML）
 │       ├── db_ops.py        # 共享数据库操作（存储/索引）
-│       ├── extract.py       # 文档提取（可选 Docling 集成）
+│       ├── extract.py       # 文档提取（可选 MineRU 集成）
 │       ├── scan.py          # 扫描 raw/ 发现新增、失败或低质量的提取
 │       ├── diff_sources.py  # 用于增量重新摄入的结构化差异
 │       ├── lint_links.py    # Wikilink 验证器 + 过时/失衡检查 + 反向引用注入
@@ -138,7 +138,7 @@ Karpathy 的[原始 gist](https://gist.github.com/karpathy/442a6bf555914893e9891
 
 | 能力 | Karpathy 的 Gist | 本项目 |
 |------|------------------|--------|
-| 文档提取（PDF、DOCX、PPTX、图片等） | 用户手动处理（如 Obsidian Web Clipper） | 通过 [Docling](https://github.com/docling-project/docling) 内置支持 |
+| 文档提取（PDF、DOCX、图片等） | 用户手动处理（如 Obsidian Web Clipper） | 通过 [MineRU](https://github.com/opendatalab/mineru) 内置支持 |
 | 变更检测 | 未涉及 | 周期性扫描 + `.manifest.json` 中的 SHA-256 哈希追踪 |
 | 增量重新摄入 | 未涉及 | 章节级结构化差异——仅重新处理变更部分 |
 | 源文档到页面的依赖追踪 | 未涉及 | `.manifest.json` 记录每个源文档生成了哪些 wiki 页面 |

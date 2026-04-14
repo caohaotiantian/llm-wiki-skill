@@ -38,10 +38,10 @@ When the user asks to set up a new wiki:
    ```bash
    node -e "console.log('Node.js OK')"
    ```
-   `pyyaml` and Node.js 18+ are required. `docling` and `pip-system-certs` are optional (document extraction). Ask before installing into a venv:
+   `pyyaml` and Node.js 18+ are required. `mineru` is optional (document extraction). Ask before installing into a venv:
    ```bash
    python3 -m venv <vault-path>/.venv
-   <vault-path>/.venv/bin/pip install pyyaml docling pip-system-certs
+   <vault-path>/.venv/bin/pip install pyyaml "mineru[all]"
    ```
 
 3. **Create vault structure:**
@@ -139,12 +139,12 @@ When the user provides source material (files, URLs, pasted text):
 - **Pasted text**: Save to `raw/YYYY-MM-DD-<brief-slug>.md`
 - **Binary files** (PDF, DOCX, PPTX, XLSX, images, HTML): Extract first, then ingest the extracted markdown. Two approaches:
 
-  **Docling extraction** (recommended for complex documents):
+  **MineRU extraction** (recommended for complex documents):
   ```bash
   python <skill-dir>/scripts/extract.py <input-file>          # → raw/extracted/...
   python <skill-dir>/scripts/extract.py --no-ocr <input-file>  # faster, no OCR
   ```
-  Record `extraction_method` in manifest: `docling +ocr`, `docling`, or `fallback`.
+  Record `extraction_method` in manifest: `mineru +ocr`, `mineru`, or `fallback`.
 
   **Agent direct reading** (fallback):
   Read the file directly using your built-in file reading. Record `extraction_method: agent` in manifest (no `extracted` field). Works well for short, clean documents. Less reliable for scanned pages, complex tables, or large files.
@@ -562,7 +562,7 @@ Populated entry:
 {
   "path": "raw/articles/microservices-design.pdf",
   "extracted": "raw/extracted/articles/microservices-design.pdf.md",
-  "extraction_method": "docling +ocr",
+  "extraction_method": "mineru +ocr",
   "sha256": "a1b2c3d4e5f6...",
   "ingested_at": "2026-04-07T14:30:00Z",
   "size_bytes": 4523,
@@ -571,7 +571,7 @@ Populated entry:
 }
 ```
 
-Fields: `path` (relative to vault root), `extracted` (omit for text/markdown), `extraction_method` (`docling +ocr`, `docling`, `fallback`, `agent`; omit for text/markdown), `sha256`, `ingested_at` (ISO), `size_bytes`, `pages_created`, `pages_updated`. Snapshots use deterministic naming (`<source-or-extracted-path>.snapshot.md`) and are not tracked in the manifest.
+Fields: `path` (relative to vault root), `extracted` (omit for text/markdown), `extraction_method` (`mineru +ocr`, `mineru`, `fallback`, `agent`; omit for text/markdown), `sha256`, `ingested_at` (ISO), `size_bytes`, `pages_created`, `pages_updated`. Snapshots use deterministic naming (`<source-or-extracted-path>.snapshot.md`) and are not tracked in the manifest.
 
 Compute SHA-256: `python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>`
 

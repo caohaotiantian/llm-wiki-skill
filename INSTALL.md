@@ -213,13 +213,13 @@ This way, `git pull` in the source repo updates all agents at once.
 
 ## Installing dependencies
 
-The skill works without any Python dependencies — the agent can read files directly. For better extraction quality (PDF, DOCX, PPTX, etc.), install Python 3.10+ and docling:
+The skill works without any Python dependencies — the agent can read files directly. For better extraction quality (PDF, DOCX, PPTX, etc.), install Python 3.10+ and MineRU:
 
 ```bash
-pip install docling pip-system-certs
+pip install "mineru[all]"
 ```
 
-> `pip-system-certs` ensures Python uses your system's certificate store, preventing SSL/TLS errors when docling downloads models on first run.
+> MineRU will download models on first run. Ensure you have adequate disk space (~20GB) and a stable internet connection.
 
 ## Agent self-install
 
