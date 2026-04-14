@@ -155,6 +155,34 @@ Karpathy's [original gist](https://gist.github.com/karpathy/442a6bf555914893e989
 
 The gist also suggests features this project does not yet cover: varied output formats (Marp slide decks, matplotlib charts).
 
+## What's New
+
+**Document extraction** — Replaced Docling with [MineRU](https://github.com/opendatalab/mineru) for higher-quality extraction of PDFs, DOCX, and images. MineRU is invoked via CLI for minimal coupling. Install with `pip install "mineru[all]"`.
+
+**Compiled-truth + timeline page model** — Each wiki page now separates rewritable synthesis (above the `---` separator) from an append-only evidence trail (below it), preventing knowledge drift over time.
+
+**Typed links** — Frontmatter `links:` field supports semantic types (`references`, `contradicts`, `depends_on`, `supersedes`, `authored_by`, `works_at`, `mentions`) for structured graph queries.
+
+**Hybrid retrieval** — New PGlite/Postgres-backed search index combining vector similarity and keyword search via reciprocal rank fusion (RRF). Supports `rebuild`, `sync`, `query`, and `verify` commands.
+
+**Provider-agnostic embeddings** — Embedding and query expansion providers are fully configurable via environment variables. Works with local models (`sentence-transformers`), OpenAI-compatible APIs, or Anthropic APIs.
+
+**Multi-query expansion** — Generates query paraphrases for better retrieval recall. Two modes: `--expand` (fast, averaged embedding) and `--expand-thorough` (multi-query RRF).
+
+**Graph analysis** — NetworkX-powered graph layer with neighborhood traversal, shortest path, PageRank/betweenness centrality, Louvain community detection, orphan finding, and Cytoscape.js HTML export.
+
+**Attribute filtering** — Query pages by frontmatter attributes: `--where "type=concept tag=strategy confidence>=0.7 updated_since=30d"`.
+
+**Pluggable storage backend** — `StorageBackend` protocol with two implementations: `FileVaultBackend` (markdown files authoritative) and `DatabaseBackend` (database authoritative, markdown exported).
+
+**Composite page scoring** — Five-indicator weighted formula (query hits, ingest freshness, edit recency, manual weight, cross-ref density) with scores stored in `.stats.json`.
+
+**Shared frontmatter parser** — All scripts now use a unified `frontmatter.py` module backed by PyYAML, replacing 6 independent regex-based parsers.
+
+**Link validation improvements** — `lint_links.py` now detects stale/unbalanced pages and injects `referenced-by` backlink blocks. Auto-fix rewrites alias mismatches to correct pipe syntax.
+
+**Batch RPC** — PGlite sidecar supports transactional multi-statement execution via `/batch` endpoint.
+
 ## Credits
 
 - [Andrej Karpathy](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — The LLM Wiki concept

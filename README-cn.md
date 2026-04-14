@@ -155,6 +155,34 @@ Karpathy 的[原始 gist](https://gist.github.com/karpathy/442a6bf555914893e9891
 
 原始 gist 还提到了本项目尚未涵盖的功能：多样化的输出格式（Marp 幻灯片、matplotlib 图表）。
 
+## 更新日志
+
+**文档提取** — 用 [MineRU](https://github.com/opendatalab/mineru) 替换了 Docling，提供更高质量的 PDF、DOCX 和图片提取。MineRU 通过 CLI 调用，耦合度最低。安装：`pip install "mineru[all]"`。
+
+**编译真相 + 时间线页面模型** — 每个 wiki 页面现在将可重写的综合内容（`---` 分隔符上方）与仅追加的证据记录（下方）分离，防止长期知识漂移。
+
+**类型化链接** — frontmatter `links:` 字段支持语义类型（`references`、`contradicts`、`depends_on`、`supersedes`、`authored_by`、`works_at`、`mentions`），用于结构化图谱查询。
+
+**混合检索** — 基于 PGlite/Postgres 的新搜索索引，通过倒数排名融合（RRF）结合向量相似度和关键词搜索。支持 `rebuild`、`sync`、`query` 和 `verify` 命令。
+
+**供应商无关的嵌入** — 嵌入和查询扩展供应商通过环境变量完全可配置。支持本地模型（`sentence-transformers`）、OpenAI 兼容 API 或 Anthropic API。
+
+**多查询扩展** — 生成查询改写以提高检索召回率。两种模式：`--expand`（快速，平均嵌入）和 `--expand-thorough`（多查询 RRF）。
+
+**图谱分析** — 基于 NetworkX 的图谱层，支持邻域遍历、最短路径、PageRank/中介中心性、Louvain 社区检测、孤立节点发现和 Cytoscape.js HTML 导出。
+
+**属性过滤** — 通过 frontmatter 属性查询页面：`--where "type=concept tag=strategy confidence>=0.7 updated_since=30d"`。
+
+**可插拔存储后端** — `StorageBackend` 协议提供两种实现：`FileVaultBackend`（Markdown 文件为权威）和 `DatabaseBackend`（数据库为权威，Markdown 导出）。
+
+**复合页面评分** — 五指标加权公式（查询命中、摄入新鲜度、编辑时效、手动权重、交叉引用密度），评分存储在 `.stats.json` 中。
+
+**统一 frontmatter 解析器** — 所有脚本现在使用基于 PyYAML 的统一 `frontmatter.py` 模块，替换了 6 个独立的正则表达式解析器。
+
+**链接验证增强** — `lint_links.py` 现在可检测过时/不平衡页面并注入 `referenced-by` 反向链接块。自动修复将别名不匹配重写为正确的管道语法。
+
+**批量 RPC** — PGlite sidecar 支持通过 `/batch` 端点进行事务性多语句执行。
+
 ## 致谢
 
 - [Andrej Karpathy](https://gist.github.com/karpathy/442a6bf555914893e9891c11519de94f) — LLM Wiki 概念
