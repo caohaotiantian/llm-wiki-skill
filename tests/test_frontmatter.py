@@ -273,3 +273,43 @@ class TestAtomicWrite:
         target = tmp_path / "sub" / "dir" / "test.md"
         atomic_write(target, "nested")
         assert target.read_text() == "nested"
+
+
+class TestJsonDefault:
+    def test_date_serialization(self):
+        import json
+        from datetime import date
+        from frontmatter import json_default
+        data = {"created": date(2026, 4, 1), "title": "Test"}
+        result = json.dumps(data, default=json_default)
+        assert '"2026-04-01"' in result
+        assert '"Test"' in result
+
+    def test_datetime_serialization(self):
+        import json
+        from datetime import datetime
+        from frontmatter import json_default
+        data = {"updated": datetime(2026, 4, 1, 14, 30, 0)}
+        result = json.dumps(data, default=json_default)
+        assert '"2026-04-01T14:30:00"' in result
+
+    def test_non_date_raises(self):
+        import json
+        import pytest
+        from frontmatter import json_default
+        with pytest.raises(TypeError):
+            json.dumps({"bad": object()}, default=json_default)
+
+    def test_frontmatter_with_yaml_dates(self):
+        """End-to-end: parse YAML with dates, serialize to JSON."""
+        import json
+        from frontmatter import parse, json_default
+        content = "---\ntitle: Test\ncreated: 2026-04-01\nupdated: 2026-04-13\n---\n\nBody."
+        fm, _ = parse(content)
+        # PyYAML converts these to date objects
+        from datetime import date
+        assert isinstance(fm["created"], date)
+        # json.dumps should work with our default handler
+        result = json.dumps(fm, default=json_default)
+        assert "2026-04-01" in result
+        assert "2026-04-13" in result

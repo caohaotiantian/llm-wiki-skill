@@ -38,7 +38,8 @@ def upsert_page_row(
     content_hash: str,
 ) -> None:
     """Insert or update a page row (without chunks, links, or tags)."""
-    fm_json = json.dumps(frontmatter) if isinstance(frontmatter, dict) else frontmatter
+    from frontmatter import json_default
+    fm_json = json.dumps(frontmatter, default=json_default) if isinstance(frontmatter, dict) else frontmatter
     db.execute(
         """INSERT INTO pages (slug, type, title, compiled_truth, timeline,
                frontmatter, content_hash, updated_at)

@@ -12,13 +12,26 @@ in YAML: status: "true".
 
 from __future__ import annotations
 
+import json
 import os
 import re
 import sys
 import tempfile
+from datetime import date, datetime
 from pathlib import Path
 
 import yaml
+
+
+def json_default(obj):
+    """JSON serializer for objects not serializable by default json code.
+
+    Handles ``datetime.date`` and ``datetime.datetime`` objects that PyYAML
+    produces from YAML date values like ``created: 2026-04-01``.
+    """
+    if isinstance(obj, (date, datetime)):
+        return obj.isoformat()
+    raise TypeError(f"Object of type {type(obj).__name__} is not JSON serializable")
 
 _FRONTMATTER_RE = re.compile(
     r"^---[ \t]*\n(.*?)\n(?:---|\.\.\.)[ \t]*(?:\n|$)", re.DOTALL

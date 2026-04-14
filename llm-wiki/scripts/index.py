@@ -694,7 +694,8 @@ def _upsert_page(db: DbClient, page: WikiPage, provider: EmbeddingProvider, use_
     All statements are collected and executed via ``db.batch()`` so they
     run inside a single transaction.
     """
-    fm_json = json.dumps(page.frontmatter)
+    from frontmatter import json_default
+    fm_json = json.dumps(page.frontmatter, default=json_default)
 
     statements: list[tuple[str, list]] = []
 

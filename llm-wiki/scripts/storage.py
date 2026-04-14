@@ -659,7 +659,8 @@ def main():
         where = {"type": args.type} if args.type else None
         pages = backend.list_pages(where)
         if args.json_output:
-            print(json.dumps([asdict(p) for p in pages], indent=2))
+            from frontmatter import json_default
+            print(json.dumps([asdict(p) for p in pages], indent=2, default=json_default))
         else:
             for p in pages:
                 print(f"  {p.slug}  [{p.type}]  {p.title}")
@@ -668,7 +669,8 @@ def main():
         page = backend.get_page(args.slug)
         if page:
             if args.json_output:
-                print(json.dumps(asdict(page), indent=2))
+                from frontmatter import json_default
+                print(json.dumps(asdict(page), indent=2, default=json_default))
             else:
                 print(page.to_markdown())
         else:
