@@ -22,8 +22,13 @@ import tempfile
 from frontmatter import atomic_write
 
 
-def extract_with_mineru(input_path: str, ocr: bool = True) -> str:
-    """Extract text using the MineRU CLI."""
+def extract_with_mineru(input_path: str, ocr: bool = True, output_path: str = None) -> str:
+    """Extract text using the MineRU CLI.
+
+    If output_path is provided, images extracted by MineRU are copied to
+    a sibling directory (<output_path>.images/) and image references in the
+    markdown are rewritten to point there.
+    """
     if shutil.which("mineru") is None:
         raise FileNotFoundError(
             "mineru CLI is required for this file type. Install: pip install \"mineru[all]\""
@@ -49,8 +54,26 @@ def extract_with_mineru(input_path: str, ocr: bool = True) -> str:
                 f"mineru produced no markdown output for {input_path}"
             )
 
-        with open(md_files[0], "r", encoding="utf-8") as f:
-            return f.read()
+        md_file = md_files[0]
+        md_dir = os.path.dirname(md_file)
+
+        with open(md_file, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Copy extracted images next to the output file
+        src_images = os.path.join(md_dir, "images")
+        if output_path and os.path.isdir(src_images) and os.listdir(src_images):
+            # Use per-document images dir to avoid collisions between extractions
+            dest_images = output_path + ".images"
+            if os.path.exists(dest_images):
+                shutil.rmtree(dest_images)
+            shutil.copytree(src_images, dest_images)
+
+            # Rewrite image paths: images/foo.png -> <basename>.images/foo.png
+            images_rel = os.path.basename(dest_images)
+            content = content.replace("images/", images_rel + "/")
+
+        return content
 
 
 def extract_fallback(input_path: str) -> str:
@@ -183,7 +206,7 @@ def main():
         )
 
     try:
-        content = extract_with_mineru(input_path, ocr=ocr)
+        content = extract_with_mineru(input_path, ocr=ocr, output_path=output_path)
         method = "mineru" + (" +ocr" if ocr else "")
     except FileNotFoundError as e:
         print(f"Error: {e}")
