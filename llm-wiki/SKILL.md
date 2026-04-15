@@ -141,10 +141,13 @@ When the user provides source material (files, URLs, pasted text):
 
   **MineRU extraction** (recommended for complex documents):
   ```bash
-  python <skill-dir>/scripts/extract.py <input-file>          # → raw/extracted/...
-  python <skill-dir>/scripts/extract.py --no-ocr <input-file>  # faster, no OCR
+  python <skill-dir>/scripts/extract.py <input-file>                    # auto-detect OCR need
+  python <skill-dir>/scripts/extract.py --no-ocr <input-file>           # text-only, skip OCR (fastest)
+  python <skill-dir>/scripts/extract.py --ocr <input-file>              # force OCR (scanned docs)
+  python <skill-dir>/scripts/extract.py --fast <input-file>             # pipeline backend (CPU, faster)
+  python <skill-dir>/scripts/extract.py --start 0 --end 10 <input-file> # page range only
   ```
-  Record `extraction_method` in manifest: `mineru +ocr`, `mineru`, or `fallback`.
+  Record `extraction_method` in manifest: `mineru +ocr`, `mineru +txt`, `mineru`, or `fallback`.
 
   **Agent direct reading** (fallback):
   Read the file directly using your built-in file reading. Record `extraction_method: agent` in manifest (no `extracted` field). Works well for short, clean documents. Less reliable for scanned pages, complex tables, or large files.
@@ -571,7 +574,7 @@ Populated entry:
 }
 ```
 
-Fields: `path` (relative to vault root), `extracted` (omit for text/markdown), `extraction_method` (`mineru +ocr`, `mineru`, `fallback`, `agent`; omit for text/markdown), `sha256`, `ingested_at` (ISO), `size_bytes`, `pages_created`, `pages_updated`. Snapshots use deterministic naming (`<source-or-extracted-path>.snapshot.md`) and are not tracked in the manifest.
+Fields: `path` (relative to vault root), `extracted` (omit for text/markdown), `extraction_method` (`mineru +ocr`, `mineru +txt`, `mineru`, `fallback`, `agent`; omit for text/markdown), `sha256`, `ingested_at` (ISO), `size_bytes`, `pages_created`, `pages_updated`. Snapshots use deterministic naming (`<source-or-extracted-path>.snapshot.md`) and are not tracked in the manifest.
 
 Compute SHA-256: `python3 -c "import hashlib,sys; print(hashlib.sha256(open(sys.argv[1],'rb').read()).hexdigest())" <file>`
 

@@ -7,8 +7,10 @@ Requires: pip install "mineru[all]"
 Usage:
     python extract.py <input-file>                     # output to raw/extracted/
     python extract.py <input-file> <output-markdown>   # explicit output path
-    python extract.py --ocr document.pdf
-    python extract.py --no-ocr slides.pptx
+    python extract.py --ocr document.pdf               # force OCR
+    python extract.py --no-ocr slides.pptx             # force text-only (fastest)
+    python extract.py --fast document.pdf               # pipeline backend (CPU, faster)
+    python extract.py --start 0 --end 10 large.pdf      # extract pages 0-10 only
 """
 
 import argparse
@@ -22,8 +24,24 @@ import tempfile
 from frontmatter import atomic_write
 
 
-def extract_with_mineru(input_path: str, ocr: bool = True) -> str:
-    """Extract text using the MineRU CLI."""
+def extract_with_mineru(
+    input_path: str,
+    ocr: bool | None = None,
+    output_path: str = None,
+    backend: str = None,
+    start_page: int = None,
+    end_page: int = None,
+) -> str:
+    """Extract text using the MineRU CLI.
+
+    Args:
+        input_path: Path to the input file.
+        ocr: True to force OCR, False to force text-only, None for auto-detect.
+        output_path: If provided, images are copied to <output_path>.images/.
+        backend: MineRU backend ('pipeline' for CPU/fast, 'hybrid-auto-engine' for GPU/quality).
+        start_page: First page to process (0-based).
+        end_page: Last page to process (0-based).
+    """
     if shutil.which("mineru") is None:
         raise FileNotFoundError(
             "mineru CLI is required for this file type. Install: pip install \"mineru[all]\""
@@ -31,10 +49,18 @@ def extract_with_mineru(input_path: str, ocr: bool = True) -> str:
 
     with tempfile.TemporaryDirectory() as tmpdir:
         cmd = ["mineru", "-p", os.path.abspath(input_path), "-o", tmpdir]
-        if ocr:
+        if ocr is True:
             cmd += ["-m", "ocr"]
-        else:
+        elif ocr is False:
             cmd += ["-m", "txt"]
+        # else: omit -m flag, MineRU defaults to auto-detect
+
+        if backend:
+            cmd += ["-b", backend]
+        if start_page is not None:
+            cmd += ["-s", str(start_page)]
+        if end_page is not None:
+            cmd += ["-e", str(end_page)]
 
         result = subprocess.run(cmd, capture_output=True, text=True)
         if result.returncode != 0:
@@ -49,8 +75,26 @@ def extract_with_mineru(input_path: str, ocr: bool = True) -> str:
                 f"mineru produced no markdown output for {input_path}"
             )
 
-        with open(md_files[0], "r", encoding="utf-8") as f:
-            return f.read()
+        md_file = md_files[0]
+        md_dir = os.path.dirname(md_file)
+
+        with open(md_file, "r", encoding="utf-8") as f:
+            content = f.read()
+
+        # Copy extracted images next to the output file
+        src_images = os.path.join(md_dir, "images")
+        if output_path and os.path.isdir(src_images) and os.listdir(src_images):
+            # Use per-document images dir to avoid collisions between extractions
+            dest_images = output_path + ".images"
+            if os.path.exists(dest_images):
+                shutil.rmtree(dest_images)
+            shutil.copytree(src_images, dest_images)
+
+            # Rewrite image paths: images/foo.png -> <basename>.images/foo.png
+            images_rel = os.path.basename(dest_images)
+            content = content.replace("images/", images_rel + "/")
+
+        return content
 
 
 def extract_fallback(input_path: str) -> str:
@@ -123,18 +167,38 @@ def main():
 
     ocr_group = parser.add_mutually_exclusive_group()
     ocr_group.add_argument(
-        "--ocr", action="store_true", default=True,
-        help="Enable OCR for scanned documents (default)",
+        "--ocr", action="store_true", default=False,
+        help="Force OCR (for scanned documents)",
     )
     ocr_group.add_argument(
         "--no-ocr", action="store_true",
-        help="Disable OCR (faster, for native-text PDFs)",
+        help="Force text-only extraction, skip OCR (fastest)",
+    )
+
+    parser.add_argument(
+        "--fast", action="store_true",
+        help="Use pipeline backend (CPU-friendly, faster, slightly lower accuracy)",
+    )
+    parser.add_argument(
+        "--start", type=int, default=None,
+        help="First page to process (0-based, for large PDFs)",
+    )
+    parser.add_argument(
+        "--end", type=int, default=None,
+        help="Last page to process (0-based, for large PDFs)",
     )
 
     args = parser.parse_args()
     input_path = args.input
     output_path = args.output
-    ocr = not args.no_ocr
+
+    # OCR mode: None = auto-detect (default), True = force OCR, False = force text-only
+    if args.ocr:
+        ocr = True
+    elif args.no_ocr:
+        ocr = False
+    else:
+        ocr = None  # let MineRU auto-detect
 
     if not os.path.exists(input_path):
         print(f"Error: {input_path} not found")
@@ -183,8 +247,20 @@ def main():
         )
 
     try:
-        content = extract_with_mineru(input_path, ocr=ocr)
-        method = "mineru" + (" +ocr" if ocr else "")
+        backend = "pipeline" if args.fast else None
+        content = extract_with_mineru(
+            input_path,
+            ocr=ocr,
+            output_path=output_path,
+            backend=backend,
+            start_page=args.start,
+            end_page=args.end,
+        )
+        method = "mineru"
+        if ocr is True:
+            method += " +ocr"
+        elif ocr is False:
+            method += " +txt"
     except FileNotFoundError as e:
         print(f"Error: {e}")
         sys.exit(1)
