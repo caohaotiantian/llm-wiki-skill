@@ -57,7 +57,7 @@ my-wiki/
 - **Obsidian-native** — Uses wikilinks, callouts, embeds, frontmatter, tags, and Graph View
 - **Scaling guidance** — Strategies for 100+ sources / 500+ pages (index splitting, targeted lint, log rotation)
 - **Session scoping** — Prevents infinite reprocessing loops across conversations
-- **Optional MineRU integration** — Extract text from PDFs, DOCX, images, and more
+- **Optional MineRU integration** — Extract text from PDFs, DOCX, images, and more. Auto-detects OCR; `--ocr` / `--no-ocr` overrides, `--fast` CPU pipeline backend, `--start`/`--end` for page ranges
 - **Periodic scanning** — Detect new, failed, or low-quality extractions; retry automatically
 - **Link validation** — Detects alias mismatches (`[[alias]]` that should be `[[filename|alias]]`) and missing link targets. Auto-fix rewrites aliases to correct pipe syntax, preserving display text and heading anchors. Runs as post-ingest validation and during lint.
 - **Compiled-truth + timeline page model** — Each page separates rewritable synthesis (compiled truth) from an append-only evidence trail (timeline), preventing knowledge drift over time
@@ -156,6 +156,8 @@ Karpathy's [original gist](https://gist.github.com/karpathy/442a6bf555914893e989
 The gist also suggests features this project does not yet cover: varied output formats (Marp slide decks, matplotlib charts).
 
 ## What's New
+
+**Extraction modes** — `extract.py` auto-detects whether OCR is needed (default); explicit overrides: `--no-ocr` (text-only, fastest), `--ocr` (force OCR on scanned docs), `--fast` (CPU pipeline backend), `--start`/`--end` (extract a page range).
 
 **Document extraction** — Replaced Docling with [MineRU](https://github.com/opendatalab/mineru) for higher-quality extraction of PDFs, DOCX, and images. MineRU is invoked via CLI for minimal coupling. Install with `pip install "mineru[all]"`.
 

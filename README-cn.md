@@ -57,7 +57,7 @@ my-wiki/
 - **Obsidian 原生** — 使用 wikilinks、callouts、嵌入、frontmatter、标签和图谱视图
 - **扩展指南** — 针对 100+ 源文档 / 500+ 页面的策略（索引拆分、定向检查、日志轮转）
 - **会话作用域** — 防止跨对话的无限重复处理循环
-- **可选 MineRU 集成** — 从 PDF、DOCX、图片等格式提取文本
+- **可选 MineRU 集成** — 从 PDF、DOCX、图片等格式提取文本。自动检测 OCR；支持 `--ocr` / `--no-ocr` 覆盖、`--fast`（CPU pipeline 后端）、`--start`/`--end`（按页范围）
 - **周期性扫描** — 检测新增、失败或低质量的提取，自动重试
 - **链接验证** — 检测别名不匹配（`[[别名]]` 应为 `[[文件名|别名]]`）和缺失的链接目标。自动修复将别名重写为正确的管道语法，保留显示文本和标题锚点。在摄入后验证和检查时运行。
 - **编译真相 + 时间线页面模型** — 每个页面将可重写的综合内容（编译真相）与仅追加的证据记录（时间线）分离，防止长期知识漂移
@@ -156,6 +156,8 @@ Karpathy 的[原始 gist](https://gist.github.com/karpathy/442a6bf555914893e9891
 原始 gist 还提到了本项目尚未涵盖的功能：多样化的输出格式（Marp 幻灯片、matplotlib 图表）。
 
 ## 更新日志
+
+**提取模式** — `extract.py` 默认自动检测是否需要 OCR；支持显式覆盖：`--no-ocr`（纯文本，最快）、`--ocr`（对扫描件强制 OCR）、`--fast`（CPU pipeline 后端）、`--start`/`--end`（仅提取指定页码范围）。
 
 **文档提取** — 用 [MineRU](https://github.com/opendatalab/mineru) 替换了 Docling，提供更高质量的 PDF、DOCX 和图片提取。MineRU 通过 CLI 调用，耦合度最低。安装：`pip install "mineru[all]"`。
 
