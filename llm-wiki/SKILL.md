@@ -146,6 +146,7 @@ When the user provides source material (files, URLs, pasted text):
   python <skill-dir>/scripts/extract.py --ocr <input-file>              # force OCR (scanned docs)
   python <skill-dir>/scripts/extract.py --fast <input-file>             # pipeline backend (CPU, faster)
   python <skill-dir>/scripts/extract.py --start 0 --end 10 <input-file> # page range only
+  python <skill-dir>/scripts/extract.py <input-dir>                     # batch every file in dir (one mineru call)
   ```
   Record `extraction_method` in manifest: `mineru +ocr`, `mineru +txt`, `mineru`, or `fallback`.
 

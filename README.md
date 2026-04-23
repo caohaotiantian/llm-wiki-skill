@@ -157,7 +157,7 @@ The gist also suggests features this project does not yet cover: varied output f
 
 ## What's New
 
-**Extraction modes** — `extract.py` auto-detects whether OCR is needed (default); explicit overrides: `--no-ocr` (text-only, fastest), `--ocr` (force OCR on scanned docs), `--fast` (CPU pipeline backend), `--start`/`--end` (extract a page range).
+**Extraction modes** — `extract.py` auto-detects whether OCR is needed (default); explicit overrides: `--no-ocr` (text-only, fastest), `--ocr` (force OCR on scanned docs), `--fast` (CPU pipeline backend), `--start`/`--end` (extract a page range). Passing a directory instead of a file batches every entry through a single MineRU invocation.
 
 **Document extraction** — Replaced Docling with [MineRU](https://github.com/opendatalab/mineru) for higher-quality extraction of PDFs, DOCX, and images. MineRU is invoked via CLI for minimal coupling. Install with `pip install "mineru[all]"`.
 

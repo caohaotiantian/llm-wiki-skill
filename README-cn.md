@@ -157,7 +157,7 @@ Karpathy 的[原始 gist](https://gist.github.com/karpathy/442a6bf555914893e9891
 
 ## 更新日志
 
-**提取模式** — `extract.py` 默认自动检测是否需要 OCR；支持显式覆盖：`--no-ocr`（纯文本，最快）、`--ocr`（对扫描件强制 OCR）、`--fast`（CPU pipeline 后端）、`--start`/`--end`（仅提取指定页码范围）。
+**提取模式** — `extract.py` 默认自动检测是否需要 OCR；支持显式覆盖：`--no-ocr`（纯文本，最快）、`--ocr`（对扫描件强制 OCR）、`--fast`（CPU pipeline 后端）、`--start`/`--end`（仅提取指定页码范围）。传入目录而非单文件时，会把目录内所有条目通过单次 MineRU 调用批量抽取。
 
 **文档提取** — 用 [MineRU](https://github.com/opendatalab/mineru) 替换了 Docling，提供更高质量的 PDF、DOCX 和图片提取。MineRU 通过 CLI 调用，耦合度最低。安装：`pip install "mineru[all]"`。
 
