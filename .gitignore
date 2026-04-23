@@ -1,8 +1,12 @@
-# Test Obsidian vault
+# Test Obsidian vaults
 test-vault/
+qa-test-vault/
 
 # Eval workspace
 llm-wiki-workspace/
+
+# Node
+node_modules/
 
 # Python
 __pycache__/
