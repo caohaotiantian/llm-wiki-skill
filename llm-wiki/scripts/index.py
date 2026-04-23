@@ -605,7 +605,7 @@ def cmd_query(
     for i, row in enumerate(rows[:20]):
         slug = row.get("page_slug", "?")
         source = row.get("chunk_source", "?")
-        score = row.get("score", 0)
+        score = float(row.get("score", 0) or 0)
         stale_flag = " [STALE]" if row.get("stale") else ""
         excerpt = (row.get("chunk_text", "") or "")[:200].replace("\n", " ")
         print(f"  [{i+1}] {slug} ({source}) score={score:.4f}{stale_flag}")
