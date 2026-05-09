@@ -217,6 +217,53 @@ def test_footnote_l4_placement_v2_pass_at_bottom(tmp_path):
     assert len(l4) == 0, f"Expected no L-4 violations, got: {l4}"
 
 
+def test_footnote_l4_placement_def_between_timeline_bullets_reported(tmp_path):
+    """v2 page with a [^foo]: def appearing BEFORE the last timeline bullet: L-4 fires.
+
+    Regression for the off-by-N bug in `_last_timeline_line`: the previous
+    implementation split on `\\n---\\s*\\n` and miscounted the lines consumed
+    by the separator, so a def sandwiched between earlier and later timeline
+    bullets was not flagged.
+    """
+    page = tmp_path / "wiki" / "page.md"
+    page.parent.mkdir(parents=True)
+    content = textwrap.dedent("""\
+        ---
+        format_version: 2
+        updated: 2025-05-01
+        ---
+
+        # Page
+
+        Prose[^foo].
+
+        ---
+
+        ## Timeline
+
+        - 2025-01-01 - event one
+        - 2025-02-01 - event two
+        [^foo]: def appears between TL bullets and last TL bullet
+        - 2025-03-01 - last event
+    """)
+    page.write_text(content)
+    fm, body = _split(content)
+
+    violations = run_all_checks(str(page), body, fm)
+
+    l4 = [v for v in violations if v.get("rule") == "L-4"]
+    assert len(l4) >= 1, (
+        f"Expected L-4 violation for def before last timeline bullet, "
+        f"got: {violations}"
+    )
+    assert l4[0].get("severity") == "error", (
+        f"L-4 should be severity=error, got: {l4[0]}"
+    )
+    assert any("foo" in str(v.get("id", "")) for v in l4), (
+        f"Expected violation to reference id 'foo', got: {l4}"
+    )
+
+
 # ---------------------------------------------------------------------------
 # format_version dispatch tests
 # ---------------------------------------------------------------------------

@@ -717,8 +717,6 @@ def is_v2_page(frontmatter: dict) -> bool:
     Strict integer comparison (per design §4.7): rejects bool (which subclasses
     int in Python), strings, floats, and future versions.
     """
-    if not isinstance(frontmatter, dict):
-        return False
     value = frontmatter.get("format_version")
     if isinstance(value, bool):
         return False
@@ -898,27 +896,35 @@ def check_footnote_id_uniqueness(page: str, body: str, frontmatter: dict) -> lis
     return violations
 
 
-def _last_timeline_line(scannable_body: str) -> int | None:
+def _separator_line(scannable_body: str) -> int | None:
+    """Return the 1-based line number of the body's `---` separator, or None.
+
+    Walks the scannable body line-by-line and returns the first line whose
+    stripped content is exactly `---` (the compiled-truth / timeline divider).
+    Line-walking avoids regex split arithmetic where `\\s*` may consume an
+    unknown number of newlines.
+    """
+    for idx, line in enumerate(scannable_body.split("\n"), start=1):
+        if line.strip() == "---":
+            return idx
+    return None
+
+
+def _last_timeline_line(scannable_body: str, sep_line: int) -> int | None:
     """Return the 1-based line number of the last timeline bullet, or None.
 
-    A timeline bullet matches `^-\\s+\\d{4}-\\d{2}-\\d{2}` and lives below
-    the body's `\\n---\\n` separator. If there's no separator or no bullets,
-    return None — L-4 cannot evaluate placement and reports nothing.
+    A timeline bullet matches `^-\\s+\\d{4}-\\d{2}-\\d{2}` and lives strictly
+    below `sep_line` (the `---` separator). Returns None if there are no
+    bullets after the separator.
     """
-    parts = re.split(r"\n---\s*\n", scannable_body, maxsplit=1)
-    if len(parts) < 2:
-        return None
-    head_lines = parts[0].count("\n") + 1  # lines consumed by head + ---
-    # +1 for the `---` line itself between parts (split consumed `\n---\n`,
-    # so line count is head + 1 separator line).
-    timeline = parts[1]
-    last_offset = -1
-    for m in re.finditer(r"^-\s+\d{4}-\d{2}-\d{2}", timeline, re.MULTILINE):
-        last_offset = m.start()
-    if last_offset < 0:
-        return None
-    rel_line = timeline[:last_offset].count("\n") + 1
-    return head_lines + rel_line
+    last_line: int | None = None
+    bullet_re = re.compile(r"^-\s+\d{4}-\d{2}-\d{2}")
+    for idx, line in enumerate(scannable_body.split("\n"), start=1):
+        if idx <= sep_line:
+            continue
+        if bullet_re.match(line):
+            last_line = idx
+    return last_line
 
 
 def check_footnote_placement(page: str, body: str, frontmatter: dict) -> list[dict]:
@@ -932,13 +938,12 @@ def check_footnote_placement(page: str, body: str, frontmatter: dict) -> list[di
     if not is_v2_page(frontmatter):
         return []
     scannable = _scannable_body(body)
-    # Anchor: the position of the body's `\n---\n` separator. Defs must come
-    # AFTER it; preferably also after the last timeline bullet.
-    sep_match = re.search(r"\n---\s*\n", scannable)
-    if not sep_match:
+    # Anchor: the line of the body's `---` separator. Defs must come AFTER
+    # it; preferably also after the last timeline bullet.
+    sep_line = _separator_line(scannable)
+    if sep_line is None:
         return []
-    sep_line = scannable[:sep_match.start()].count("\n") + 1
-    last_tl_line = _last_timeline_line(scannable)
+    last_tl_line = _last_timeline_line(scannable, sep_line)
     threshold = last_tl_line if last_tl_line is not None else sep_line
 
     _, defs = parse_footnotes(body)
