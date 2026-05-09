@@ -19,8 +19,10 @@ import json
 import os
 import re
 import sys
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from pathlib import Path
+
+import yaml
 
 from frontmatter import parse as _parse_fm, parse_aliases as _parse_aliases_fm, parse_typed_links as _parse_typed_links_fm, atomic_write
 
@@ -975,6 +977,479 @@ def run_all_checks(page: str, body: str, frontmatter: dict) -> list[dict]:
     return violations
 
 
+# ---------------------------------------------------------------------------
+# Migration ops M-1..M-5 — see design wiki-footnote-citations.md §2 D6 +
+# §4.4 (claims_inferred / claims_ambiguous) + §4.6 (footnote ID scheme,
+# collision determinism, src- prefix).
+#
+# `migrate_legacy_page(page_path, content) -> (new_content, MigrationReport)`
+# is the only public entry point. Existing fix paths (`fix_alias_mismatches`,
+# `inject_referenced_by`) are not refactored.
+# ---------------------------------------------------------------------------
+
+
+@dataclass
+class MigrationReport:
+    """Result of running `migrate_legacy_page` on a single page.
+
+    `success` and `skipped` are mutually exclusive in normal use:
+      - success=True: the migrator wrote a new body.
+      - skipped=True: the page is already v2 (`reason="already_v2"`) or the
+        migration's internal round-trip parse failed
+        (`reason="round_trip_failed"`).
+    `format_version_before` / `_after` are diagnostic; the version is read
+    from frontmatter both pre- and post-migration.
+    """
+    success: bool = False
+    skipped: bool = False
+    reason: str = ""
+    format_version_before: int | None = None
+    format_version_after: int | None = None
+    notes: list[str] = field(default_factory=list)
+
+
+# ID derived from a wikilink target: lowercase letters, digits, hyphens only.
+# All other characters (spaces, slashes, dots, underscores) become `-`, then
+# repeats are collapsed and edge hyphens stripped — same lenience as
+# `normalize_for_matching` but emitting a slug not a normalized form.
+_ID_NON_ALNUM_RE = re.compile(r"[^a-z0-9]+")
+
+
+def _slugify_basename(target: str) -> str:
+    """Derive a footnote ID from a wikilink target's basename.
+
+    Per design §4.6: ID is `basename(target).removesuffix('.md')`. We also
+    lowercase + replace non-alnum with `-` so IDs match the v2 lint regex
+    (`[a-z0-9-]+`). Empty result falls back to `'src'`.
+    """
+    target = target.split("|", 1)[0]
+    target = target.split("#", 1)[0]
+    target = target.strip()
+    if target.lower().endswith(".md"):
+        target = target[:-3]
+    base = os.path.basename(target).lower()
+    slug = _ID_NON_ALNUM_RE.sub("-", base).strip("-")
+    return slug or "src"
+
+
+def _scrub_for_scan(body: str) -> str:
+    """Return body with code regions blanked but offsets preserved.
+
+    Same shape as `_scannable_body` but additionally blanks indented code
+    blocks (≥4 spaces or a tab at the start of a line). Used by the migrator
+    so wikilink offsets in code don't survive the M-1 sweep.
+    """
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
+    lines = body.split("\n")
+    out: list[str] = []
+    code_fence_marker = ""
+    for line in lines:
+        stripped = line.strip()
+        if not code_fence_marker:
+            fence_match = re.match(r"^(`{3,}|~{3,})", stripped)
+            if fence_match:
+                code_fence_marker = fence_match.group(1)
+                out.append(" " * len(line))
+                continue
+            # Indented code block: ≥4 leading spaces or a tab. We keep blank
+            # lines as-is (they don't contain wikilinks).
+            if line and (line.startswith("    ") or line.startswith("\t")):
+                out.append(" " * len(line))
+                continue
+            scrubbed = re.sub(
+                r"`[^`\n]+`", lambda m: " " * len(m.group(0)), line
+            )
+            out.append(scrubbed)
+        else:
+            fence_char = code_fence_marker[0]
+            fence_len = len(code_fence_marker)
+            close_match = re.match(
+                r"^" + re.escape(fence_char) + r"{" + str(fence_len) + r",}\s*$",
+                stripped,
+            )
+            if close_match:
+                code_fence_marker = ""
+            out.append(" " * len(line))
+    return "\n".join(out)
+
+
+_RELATIONSHIPS_HEADING_RE = re.compile(
+    r"^(#{1,6})\s+(?:relationships|related|see also)\s*$",
+    re.IGNORECASE | re.MULTILINE,
+)
+_ANY_HEADING_RE = re.compile(r"^#{1,6}\s+", re.MULTILINE)
+_FOOTNOTE_DEF_LINE_RE = re.compile(r"^\[\^[a-z0-9-]+\]:\s")
+_INLINE_FOOTNOTE_RE = re.compile(r"\^\[(inferred|ambiguous)\]")
+
+
+def _relationships_spans(scannable: str) -> list[tuple[int, int]]:
+    """Return [(start, end), ...] character spans inside Relationships sections.
+
+    A Relationships section spans from a heading at any level whose text is
+    `relationships`, `related`, or `see also` (case-insensitive) up to (but
+    not including) the next heading at any level — design §2 D6 M-1.
+    """
+    spans: list[tuple[int, int]] = []
+    headings = list(_ANY_HEADING_RE.finditer(scannable))
+    rel_starts = {m.start() for m in _RELATIONSHIPS_HEADING_RE.finditer(scannable)}
+    for i, m in enumerate(headings):
+        if m.start() not in rel_starts:
+            continue
+        start = m.start()
+        end = headings[i + 1].start() if i + 1 < len(headings) else len(scannable)
+        spans.append((start, end))
+    return spans
+
+
+def _in_any_span(offset: int, spans: list[tuple[int, int]]) -> bool:
+    return any(s <= offset < e for s, e in spans)
+
+
+def _line_starts_with_footnote_def(scannable: str, offset: int) -> bool:
+    """True if `scannable[offset]` lies on a `[^id]: …` definition line."""
+    line_start = scannable.rfind("\n", 0, offset) + 1
+    line_end = scannable.find("\n", offset)
+    if line_end == -1:
+        line_end = len(scannable)
+    return bool(_FOOTNOTE_DEF_LINE_RE.match(scannable[line_start:line_end]))
+
+
+def _has_user_footnotes(body: str) -> bool:
+    """True iff the body contains any `[^id]` ref or def outside code regions.
+
+    Used to decide whether migrator-derived IDs get the `src-` prefix
+    (design §4.6 / D6 M-5).
+    """
+    scannable = _scrub_for_scan(body)
+    return bool(_FOOTNOTE_REF_RE.search(scannable))
+
+
+def _split_compiled_below(body: str) -> tuple[str, str | None]:
+    """Split body on the first `\\n---\\s*\\n` separator.
+
+    Returns (compiled_truth, below_rule). If no separator exists,
+    returns (body, None).
+    """
+    parts = re.split(r"\n---[ \t]*\n", body, maxsplit=1)
+    if len(parts) == 1:
+        return body, None
+    return parts[0], parts[1]
+
+
+def _migrate_m1(
+    compiled: str, has_user_footnotes: bool
+) -> tuple[str, list[tuple[str, str]]]:
+    """M-1: rewrite inline `[[target]]` wikilinks to `[^id]` refs.
+
+    Returns the new compiled-truth text and a list of `(id, target)` pairs
+    in document order, deduplicated. Excludes wikilinks inside Relationships
+    sections, fenced code, inline code, indented code, and footnote-def lines.
+    """
+    scannable = _scrub_for_scan(compiled)
+    rel_spans = _relationships_spans(scannable)
+
+    # Walk wikilinks in the scannable view (offsets aligned with `compiled`).
+    # Decisions:
+    #   - skip if inside Relationships span
+    #   - skip if line is a footnote-def line
+    # Each kept match contributes a footnote ID assignment.
+    matches: list[tuple[int, int, str]] = []  # (start, end, target)
+    for m in WIKILINK_RE.finditer(scannable):
+        if _in_any_span(m.start(), rel_spans):
+            continue
+        if _line_starts_with_footnote_def(scannable, m.start()):
+            continue
+        target = extract_link_target(m.group(1))
+        if not target:
+            continue
+        matches.append((m.start(), m.end(), target))
+
+    # Assign IDs in document order. Same target → same ID. Different targets
+    # whose basename collides → numeric suffix `-2`, `-3`, …
+    target_to_id: dict[str, str] = {}
+    base_to_count: dict[str, int] = {}
+    pairs: list[tuple[str, str]] = []  # (id, original_target_string)
+    for _start, _end, target in matches:
+        if target in target_to_id:
+            continue
+        base = _slugify_basename(target)
+        if has_user_footnotes:
+            base = "src-" + base
+        n = base_to_count.get(base, 0) + 1
+        base_to_count[base] = n
+        fid = base if n == 1 else f"{base}-{n}"
+        target_to_id[target] = fid
+        pairs.append((fid, target))
+
+    # Rewrite compiled-truth right-to-left so earlier offsets stay valid.
+    out = compiled
+    for start, end, target in reversed(matches):
+        fid = target_to_id[target]
+        out = out[:start] + f"[^{fid}]" + out[end:]
+    return out, pairs
+
+
+def _walk_back_for_claim(body: str, marker_offset: int) -> str:
+    """Capture the claim text preceding a `^[inferred]` / `^[ambiguous]` marker.
+
+    Walks back from `marker_offset` per design §2 D6 M-2 priority order:
+      - previous `. ! ?`
+      - bullet's first non-whitespace char (if marker is on/inside a bullet line)
+      - end of previous heading line
+      - start of file
+
+    If no boundary is found within 500 chars, returns the literal string `?`.
+    Otherwise returns the captured text truncated to 200 chars and stripped.
+    """
+    if marker_offset <= 0:
+        return "?"
+
+    # Determine if the marker's line is a bullet line.
+    line_start = body.rfind("\n", 0, marker_offset) + 1
+    line_text = body[line_start:marker_offset]
+    bullet_match = re.match(r"^[ \t]*([-*+])[ \t]+", line_text)
+    bullet_first_char_offset: int | None = None
+    if bullet_match:
+        # First non-whitespace char is the bullet glyph itself; per design,
+        # capture from the bullet's TEXT start (the char after the bullet
+        # marker and its whitespace), not from the hyphen. Verified by the
+        # bullet edge-case test (no leading "- " in the entry).
+        bullet_first_char_offset = line_start + bullet_match.end()
+
+    # The captured text is the sentence PRECEDING the marker — its terminating
+    # punctuation (if any) belongs to the captured text, not to the boundary.
+    # So when searching for "previous sentence-end" we skip whitespace + a
+    # single trailing `.`/`!`/`?` adjacent to the marker.
+    search_end = marker_offset
+    while search_end > 0 and body[search_end - 1] in " \t":
+        search_end -= 1
+    if search_end > 0 and body[search_end - 1] in ".!?":
+        search_end -= 1
+
+    # Search backwards within 500 chars for the closest of the boundaries.
+    limit = max(0, marker_offset - 500)
+    best: int | None = None  # offset of first char of captured text
+
+    # Sentence-end search: find the most recent `. ` / `! ` / `? ` (or `.\n`
+    # variants) PRIOR to the current sentence's terminator.
+    last_period = max(
+        body.rfind(". ", limit, search_end),
+        body.rfind("? ", limit, search_end),
+        body.rfind("! ", limit, search_end),
+        body.rfind(".\n", limit, search_end),
+        body.rfind("?\n", limit, search_end),
+        body.rfind("!\n", limit, search_end),
+    )
+    if last_period != -1:
+        # Capture starts after the punctuation + the following space/newline.
+        candidate = last_period + 2
+        if candidate <= marker_offset:
+            best = candidate
+
+    # Bullet first non-whitespace char.
+    if bullet_first_char_offset is not None and bullet_first_char_offset >= limit:
+        if best is None or bullet_first_char_offset > best:
+            best = bullet_first_char_offset
+
+    # End of previous heading line: find the most recent `\n` that follows
+    # a heading line (i.e., the line after a heading).
+    heading_iter = list(re.finditer(r"^#{1,6}\s+.*$", body[:marker_offset], re.MULTILINE))
+    if heading_iter:
+        last_heading = heading_iter[-1]
+        # Capture starts after the heading's newline.
+        nl = body.find("\n", last_heading.end())
+        candidate = (nl + 1) if nl != -1 else last_heading.end()
+        if candidate >= limit and (best is None or candidate > best):
+            best = candidate
+
+    # Start-of-file fallback (only if within 500-char window).
+    if best is None and marker_offset <= 500:
+        best = 0
+
+    if best is None:
+        return "?"
+
+    captured = body[best:marker_offset].strip()
+    if not captured:
+        return "?"
+    if len(captured) > 200:
+        captured = captured[:200]
+    return captured
+
+
+def _migrate_m2(
+    body: str, frontmatter: dict
+) -> tuple[str, dict]:
+    """M-2: extract `^[inferred]` / `^[ambiguous]` markers into frontmatter.
+
+    Mutates a copy of `frontmatter` (returned) by appending claim text to
+    `claims_inferred` / `claims_ambiguous` lists. The body returned has the
+    markers stripped (token + a single trailing whitespace if present).
+    """
+    fm = dict(frontmatter)
+    inferred = list(fm.get("claims_inferred") or [])
+    ambiguous = list(fm.get("claims_ambiguous") or [])
+
+    # Walk the markers left-to-right; collect captured text using offsets in
+    # the *original* body (so walk-back sees the un-mutated text). Then strip
+    # markers right-to-left so earlier offsets stay valid.
+    marker_hits: list[tuple[int, int, str, str]] = []  # (start, end, kind, captured)
+    for m in _INLINE_FOOTNOTE_RE.finditer(body):
+        kind = m.group(1)
+        captured = _walk_back_for_claim(body, m.start())
+        marker_hits.append((m.start(), m.end(), kind, captured))
+        if kind == "inferred":
+            inferred.append(captured)
+        else:
+            ambiguous.append(captured)
+
+    new_body = body
+    for start, end, _kind, _captured in reversed(marker_hits):
+        # Also consume a single trailing whitespace if it directly follows
+        # the marker (per design §2 D6 M-2 final bullet).
+        consume_end = end
+        if consume_end < len(new_body) and new_body[consume_end] in " \t":
+            consume_end += 1
+        # If removing the marker leaves a leading space at the start of a line,
+        # also drop that leading space so we don't end up with trailing-space
+        # artifacts on the previous sentence.
+        consume_start = start
+        if consume_start > 0 and new_body[consume_start - 1] in " \t":
+            consume_start -= 1
+        new_body = new_body[:consume_start] + new_body[consume_end:]
+
+    if inferred:
+        fm["claims_inferred"] = inferred
+    if ambiguous:
+        fm["claims_ambiguous"] = ambiguous
+    return new_body, fm
+
+
+def _serialize_frontmatter(fm: dict) -> str:
+    """Serialize a frontmatter dict back to YAML for splicing into a page.
+
+    Produces canonical YAML with PyYAML's default flow=False so lists become
+    block-style. Trailing newline is dropped — caller controls separators.
+    """
+    return yaml.safe_dump(
+        fm, sort_keys=False, allow_unicode=True, default_flow_style=False
+    ).rstrip("\n")
+
+
+def _strip_frontmatter_block(content: str) -> tuple[str, str | None]:
+    """Return (body_without_frontmatter, original_fm_text or None).
+
+    `original_fm_text` is the raw YAML text between the `---` fences,
+    without the fences themselves.
+    """
+    content = content.replace("\r\n", "\n").replace("\r", "\n")
+    m = re.match(r"^---[ \t]*\n(.*?)\n(?:---|\.\.\.)[ \t]*(\n|$)", content, re.DOTALL)
+    if not m:
+        return content, None
+    return content[m.end():], m.group(1)
+
+
+def migrate_legacy_page(
+    page_path: str | Path, content: str
+) -> tuple[str, MigrationReport]:
+    """Migrate a legacy wiki page to v2 format.
+
+    Returns the rewritten content and a `MigrationReport`. Idempotent on
+    pages already at `format_version: 2` (returns content byte-equal).
+    Performs ops M-1..M-5 from design §2 D6:
+
+      - M-1: inline compiled-truth wikilinks → `[^id]` refs (+ defs at bottom).
+      - M-2: `^[inferred]` / `^[ambiguous]` markers → frontmatter claim lists.
+      - M-3: write `format_version: 2` into frontmatter.
+      - M-4: idempotency (skipped on v2 input).
+      - M-5: when the page already contains user `[^…]` footnotes, every
+        migrator-derived ID is prefixed `src-` (uniformly).
+
+    On internal round-trip failure, returns the original content with
+    `MigrationReport(skipped=True, reason="round_trip_failed")` — the caller
+    must treat the file as untouched.
+    """
+    fm, body = _parse_fm(content)
+    fv_before = fm.get("format_version") if isinstance(fm.get("format_version"), int) else None
+
+    if is_v2_page(fm):
+        return content, MigrationReport(
+            skipped=True,
+            reason="already_v2",
+            format_version_before=fv_before,
+            format_version_after=fv_before,
+        )
+
+    # Detect pre-existing user footnotes in the *original* body. This decides
+    # whether migrator-derived IDs get the `src-` prefix (M-5).
+    has_user_fn = _has_user_footnotes(body)
+
+    # M-2 first: scan whole body for `^[…]` markers, capture claims, strip
+    # markers. Done before M-1 so the wikilink rewriter sees the cleaned body
+    # (and so claim capture sees original prose with intact wikilinks).
+    body_after_m2, fm_after_m2 = _migrate_m2(body, fm)
+
+    # Split body for M-1.
+    compiled, below = _split_compiled_below(body_after_m2)
+
+    # M-1: rewrite compiled-truth wikilinks.
+    new_compiled, fn_pairs = _migrate_m1(compiled, has_user_fn)
+
+    # Build the footnote-definition block to append at file bottom.
+    def_lines = [f"[^{fid}]: [[{target}]]" for fid, target in fn_pairs]
+    def_block = "\n".join(def_lines)
+
+    # Reassemble body. If the page had no separator, we still emit one so the
+    # bottom block lives below the rule per the design.
+    if below is None:
+        new_body = new_compiled.rstrip("\n")
+        if def_block:
+            new_body = new_body + "\n\n---\n\n" + def_block + "\n"
+        else:
+            new_body = new_compiled  # no defs, no synthetic separator
+    else:
+        below_stripped = below.rstrip("\n")
+        new_body = new_compiled + "\n---\n" + below_stripped
+        if def_block:
+            new_body = new_body + "\n\n" + def_block + "\n"
+        else:
+            # Preserve original trailing newline if any, otherwise leave as is.
+            if below.endswith("\n"):
+                new_body = new_body + "\n"
+
+    # M-3: set format_version: 2.
+    fm_after_m2["format_version"] = 2
+
+    # Reassemble the full content.
+    new_fm_yaml = _serialize_frontmatter(fm_after_m2)
+    new_content = "---\n" + new_fm_yaml + "\n---\n\n" + new_body.lstrip("\n")
+
+    # Internal round-trip parse:
+    #   (a) frontmatter parses without raising.
+    #   (b) body still splits cleanly on the `---` separator (when defs exist).
+    #   (c) frontmatter contains format_version: 2.
+    try:
+        rt_fm, rt_body = _parse_fm(new_content)
+        if rt_fm.get("format_version") != 2:
+            raise ValueError("format_version not set to 2")
+        if def_block and "\n---\n" not in rt_body and "\n---" not in rt_body:
+            raise ValueError("body separator missing after migration")
+    except Exception as exc:  # pragma: no cover — defensive
+        return content, MigrationReport(
+            skipped=True,
+            reason="round_trip_failed",
+            format_version_before=fv_before,
+            format_version_after=None,
+            notes=[str(exc)],
+        )
+
+    return new_content, MigrationReport(
+        success=True,
+        format_version_before=fv_before,
+        format_version_after=2,
+    )
+
+
 def main():
     parser = argparse.ArgumentParser(
         description="Scan wiki pages for wikilink issues: alias mismatches and missing targets.",
@@ -1034,15 +1509,54 @@ def main():
     # Resolve links
     report = resolve_links(vault_path, index, files_to_scan)
 
-    # Auto-fix if requested
-    if args.fix and report["alias_mismatches"]:
-        fixes = fix_alias_mismatches(vault_path, report["alias_mismatches"])
-        if not args.json_output:
-            print(f"Fixed {fixes} alias mismatch(es).\n")
-        # Re-scan after fixing to get updated report
+    # Auto-fix if requested. Migration runs FIRST (per design §4.3 — `--fix`
+    # is the opportunistic migration vehicle). After the per-page migration
+    # writes complete, the alias-mismatch fixer runs on the (possibly
+    # migrated) bodies just as before.
+    if args.fix:
+        migrated = 0
+        skipped_v2 = 0
+        for rel_path in files_to_scan:
+            abs_path = (
+                rel_path
+                if os.path.isabs(rel_path)
+                else os.path.join(str(vault_path), rel_path)
+            )
+            try:
+                with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                    page_content = f.read()
+            except OSError:
+                continue
+            new_content, mig_report = migrate_legacy_page(abs_path, page_content)
+            if mig_report.success and new_content != page_content:
+                try:
+                    atomic_write(abs_path, new_content)
+                    migrated += 1
+                except OSError as e:
+                    print(
+                        f"Warning: could not write {rel_path}: {e}",
+                        file=sys.stderr,
+                    )
+            elif mig_report.skipped and mig_report.reason == "already_v2":
+                skipped_v2 += 1
+        if not args.json_output and migrated:
+            print(f"Migrated {migrated} legacy page(s) to v2 format.\n")
+
+        # Re-scan after migration so the alias-mismatch list reflects the
+        # new bodies (footnote refs may have moved wikilinks around).
         index = build_resolution_index(vault_path)
         report = resolve_links(vault_path, index, files_to_scan)
+
+        fixes = 0
+        if report["alias_mismatches"]:
+            fixes = fix_alias_mismatches(vault_path, report["alias_mismatches"])
+            if not args.json_output:
+                print(f"Fixed {fixes} alias mismatch(es).\n")
+            # Re-scan after fixing to get updated report
+            index = build_resolution_index(vault_path)
+            report = resolve_links(vault_path, index, files_to_scan)
         report["summary"]["fixes_applied"] = fixes
+        report["summary"]["migrations_applied"] = migrated
 
     print_report(report, json_output=args.json_output)
 
