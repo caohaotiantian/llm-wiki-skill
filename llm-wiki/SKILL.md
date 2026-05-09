@@ -95,7 +95,7 @@ The compiled-truth zone uses Obsidian reference footnotes `[^id]` for per-senten
 
 Footnote definitions take the form `[^id]: …` and live at the bottom of the file, after the timeline (i.e., end of the page). Keeping every footnote definition at the bottom of the file gives Obsidian a single, predictable definition pool per page.
 
-Footnote IDs are page-local and derived from the citation target (e.g., a citation pointing at `[[raw/articles/fowler-microservices]]` uses `[^fowler-microservices]`). IDs collide across different targets with the same basename are disambiguated with `-2`, `-3` suffixes in document order.
+Footnote IDs are page-local and derived from the citation target (e.g., a citation pointing at `[[raw/articles/fowler-microservices]]` uses `[^fowler-microservices]`). IDs colliding across different targets with the same basename are disambiguated with `-2`, `-3` suffixes in document order.
 
 Inline `^[inferred]` / `^[ambiguous]` confidence markers (Obsidian's *inline* footnote form, syntactically distinct from `[^id]`) are replaced by two frontmatter list fields, `claims_inferred:` and `claims_ambiguous:`, on v2 pages. See `references/schema.md` for the full template.
 
