@@ -19,6 +19,7 @@ import json
 import os
 import re
 import sys
+from dataclasses import dataclass
 from pathlib import Path
 
 from frontmatter import parse as _parse_fm, parse_aliases as _parse_aliases_fm, parse_typed_links as _parse_typed_links_fm, atomic_write
@@ -670,6 +671,303 @@ def inject_referenced_by(vault_path) -> int:
             modified += 1
 
     return modified
+
+
+# ---------------------------------------------------------------------------
+# v2 footnote lint rules (L-1..L-4) and format_version dispatch.
+#
+# Per design wiki-footnote-citations.md §4.7, a page is treated as v2 iff
+# `format_version` parses to the integer literal 2. Any other value (string
+# "2", float 2.1, future int 3, missing key) is treated as legacy and the
+# new rules do not apply.
+# ---------------------------------------------------------------------------
+
+
+@dataclass(frozen=True)
+class FootnoteRef:
+    """An inline `[^id]` reference occurrence in the body."""
+    id: str
+    line: int
+    col: int
+
+
+@dataclass(frozen=True)
+class FootnoteDef:
+    """A `[^id]: text` definition occurrence in the body."""
+    id: str
+    line: int
+    col: int
+    text: str
+
+
+# Reference: `[^id]` inline. Strict charset matches the migrator's ID scheme
+# (lowercase alphanumerics + hyphen). Definitions with mixed case or other
+# characters are simply not parsed by these rules.
+_FOOTNOTE_REF_RE = re.compile(r"\[\^([a-z0-9-]+)\]")
+# Definition: a line beginning `[^id]: <text>`. Multiline mode lets us scan
+# the whole body in one pass.
+_FOOTNOTE_DEF_RE = re.compile(
+    r"^\[\^([a-z0-9-]+)\]:\s*(.*)$", re.MULTILINE
+)
+
+
+def is_v2_page(frontmatter: dict) -> bool:
+    """Return True iff `frontmatter['format_version']` is the integer literal 2.
+
+    Strict integer comparison (per design §4.7): rejects bool (which subclasses
+    int in Python), strings, floats, and future versions.
+    """
+    if not isinstance(frontmatter, dict):
+        return False
+    value = frontmatter.get("format_version")
+    if isinstance(value, bool):
+        return False
+    return isinstance(value, int) and value == 2
+
+
+def _scannable_body(body: str) -> str:
+    """Return body with fenced code blocks and inline code spans blanked out.
+
+    Replaces those regions with same-length space runs so absolute character
+    offsets — and therefore line/col coordinates of surviving matches — stay
+    aligned with the original body. Mirrors the exclusion logic at
+    `fix_alias_mismatches` (lint_links.py:485-505) which skips fenced blocks
+    and inline `code` spans, so footnote markers inside code never trigger
+    lint rules. (We keep newlines so `re.MULTILINE` anchors keep working.)
+    """
+    body = body.replace("\r\n", "\n").replace("\r", "\n")
+    lines = body.split("\n")
+    out_lines: list[str] = []
+    code_fence_marker = ""
+
+    for line in lines:
+        stripped = line.strip()
+        if not code_fence_marker:
+            fence_match = re.match(r"^(`{3,}|~{3,})", stripped)
+            if fence_match:
+                code_fence_marker = fence_match.group(1)
+                # Blank the fence line itself so a `[^id]` accidentally on the
+                # opening fence is not parsed.
+                out_lines.append(" " * len(line))
+                continue
+            # Strip inline `code` spans — replace each with same-length spaces
+            # so column offsets are preserved.
+            scrubbed = re.sub(
+                r"`[^`\n]+`", lambda m: " " * len(m.group(0)), line
+            )
+            out_lines.append(scrubbed)
+        else:
+            fence_char = code_fence_marker[0]
+            fence_len = len(code_fence_marker)
+            close_match = re.match(
+                r"^" + re.escape(fence_char) + r"{" + str(fence_len) + r",}\s*$",
+                stripped,
+            )
+            if close_match:
+                code_fence_marker = ""
+            out_lines.append(" " * len(line))
+
+    return "\n".join(out_lines)
+
+
+def _offset_to_line_col(text: str, offset: int) -> tuple[int, int]:
+    """Convert an absolute character offset into 1-based (line, col)."""
+    prefix = text[:offset]
+    line = prefix.count("\n") + 1
+    last_nl = prefix.rfind("\n")
+    col = offset - (last_nl + 1) + 1 if last_nl >= 0 else offset + 1
+    return line, col
+
+
+def parse_footnotes(body: str) -> tuple[list[FootnoteRef], list[FootnoteDef]]:
+    """Parse all `[^id]` refs and `[^id]: text` defs from the body.
+
+    Excludes matches inside fenced code blocks (``` and ~~~) and inline
+    backtick spans. A definition line is also recorded as one ref by the
+    underlying regex; we filter those out so refs only carry inline-prose
+    occurrences.
+    """
+    scannable = _scannable_body(body)
+
+    defs: list[FootnoteDef] = []
+    def_offsets: set[int] = set()
+    for m in _FOOTNOTE_DEF_RE.finditer(scannable):
+        line, col = _offset_to_line_col(scannable, m.start())
+        defs.append(FootnoteDef(id=m.group(1), line=line, col=col, text=m.group(2).strip()))
+        # Mark the definition's `[^id]` opening offset so we can skip it when
+        # collecting refs (otherwise every def would also count as a ref).
+        def_offsets.add(m.start())
+
+    refs: list[FootnoteRef] = []
+    for m in _FOOTNOTE_REF_RE.finditer(scannable):
+        if m.start() in def_offsets:
+            continue
+        line, col = _offset_to_line_col(scannable, m.start())
+        refs.append(FootnoteRef(id=m.group(1), line=line, col=col))
+
+    return refs, defs
+
+
+def _violation(rule: str, page: str, line: int, col: int, message: str,
+               *, fid: str | None = None, severity: str = "error") -> dict:
+    """Build a violation record (dict) with consistent keys."""
+    v = {
+        "rule": rule,
+        "page": page,
+        "line": line,
+        "col": col,
+        "severity": severity,
+        "message": message,
+    }
+    if fid is not None:
+        v["id"] = fid
+    return v
+
+
+def check_footnote_refs_have_defs(page: str, body: str, frontmatter: dict) -> list[dict]:
+    """L-1: every `[^id]` ref has a matching `[^id]:` definition.
+
+    Returns [] on legacy pages.
+    """
+    if not is_v2_page(frontmatter):
+        return []
+    refs, defs = parse_footnotes(body)
+    def_ids = {d.id for d in defs}
+    violations: list[dict] = []
+    seen: set[str] = set()
+    for ref in refs:
+        if ref.id in def_ids:
+            continue
+        if ref.id in seen:
+            continue
+        seen.add(ref.id)
+        violations.append(_violation(
+            "L-1", page, ref.line, ref.col,
+            f"footnote reference [^{ref.id}] has no matching definition",
+            fid=ref.id,
+        ))
+    return violations
+
+
+def check_footnote_defs_referenced(page: str, body: str, frontmatter: dict) -> list[dict]:
+    """L-2: every `[^id]:` def is referenced at least once. Severity=warning.
+
+    Returns [] on legacy pages.
+    """
+    if not is_v2_page(frontmatter):
+        return []
+    refs, defs = parse_footnotes(body)
+    ref_ids = {r.id for r in refs}
+    violations: list[dict] = []
+    seen: set[str] = set()
+    for d in defs:
+        if d.id in ref_ids:
+            continue
+        if d.id in seen:
+            continue
+        seen.add(d.id)
+        violations.append(_violation(
+            "L-2", page, d.line, d.col,
+            f"footnote definition [^{d.id}] is never referenced",
+            fid=d.id, severity="warning",
+        ))
+    return violations
+
+
+def check_footnote_id_uniqueness(page: str, body: str, frontmatter: dict) -> list[dict]:
+    """L-3: footnote IDs are unique within the page.
+
+    Reports each duplicate definition (after the first) once. Returns [] on
+    legacy pages.
+    """
+    if not is_v2_page(frontmatter):
+        return []
+    _, defs = parse_footnotes(body)
+    violations: list[dict] = []
+    first_seen: dict[str, FootnoteDef] = {}
+    for d in defs:
+        if d.id in first_seen:
+            violations.append(_violation(
+                "L-3", page, d.line, d.col,
+                f"footnote id [^{d.id}] defined more than once "
+                f"(first at line {first_seen[d.id].line})",
+                fid=d.id,
+            ))
+        else:
+            first_seen[d.id] = d
+    return violations
+
+
+def _last_timeline_line(scannable_body: str) -> int | None:
+    """Return the 1-based line number of the last timeline bullet, or None.
+
+    A timeline bullet matches `^-\\s+\\d{4}-\\d{2}-\\d{2}` and lives below
+    the body's `\\n---\\n` separator. If there's no separator or no bullets,
+    return None — L-4 cannot evaluate placement and reports nothing.
+    """
+    parts = re.split(r"\n---\s*\n", scannable_body, maxsplit=1)
+    if len(parts) < 2:
+        return None
+    head_lines = parts[0].count("\n") + 1  # lines consumed by head + ---
+    # +1 for the `---` line itself between parts (split consumed `\n---\n`,
+    # so line count is head + 1 separator line).
+    timeline = parts[1]
+    last_offset = -1
+    for m in re.finditer(r"^-\s+\d{4}-\d{2}-\d{2}", timeline, re.MULTILINE):
+        last_offset = m.start()
+    if last_offset < 0:
+        return None
+    rel_line = timeline[:last_offset].count("\n") + 1
+    return head_lines + rel_line
+
+
+def check_footnote_placement(page: str, body: str, frontmatter: dict) -> list[dict]:
+    """L-4: footnote definitions all sit after the last timeline line.
+
+    Reports any def whose line number is at or before the last timeline
+    bullet (or before the body's `---` separator if a timeline exists).
+    Returns [] on legacy pages, and [] if no `---` separator exists (the
+    page has no timeline to anchor against).
+    """
+    if not is_v2_page(frontmatter):
+        return []
+    scannable = _scannable_body(body)
+    # Anchor: the position of the body's `\n---\n` separator. Defs must come
+    # AFTER it; preferably also after the last timeline bullet.
+    sep_match = re.search(r"\n---\s*\n", scannable)
+    if not sep_match:
+        return []
+    sep_line = scannable[:sep_match.start()].count("\n") + 1
+    last_tl_line = _last_timeline_line(scannable)
+    threshold = last_tl_line if last_tl_line is not None else sep_line
+
+    _, defs = parse_footnotes(body)
+    violations: list[dict] = []
+    for d in defs:
+        if d.line <= threshold:
+            violations.append(_violation(
+                "L-4", page, d.line, d.col,
+                f"footnote definition [^{d.id}] must appear after the timeline "
+                f"(at or below line {threshold + 1})",
+                fid=d.id,
+            ))
+    return violations
+
+
+def run_all_checks(page: str, body: str, frontmatter: dict) -> list[dict]:
+    """Run all v2 footnote checks against a single page.
+
+    On legacy pages every check is a no-op, so the returned list is empty.
+    Existing entry points (check_stale_pages, check_unbalanced_pages,
+    fix_alias_mismatches, inject_referenced_by) remain untouched and are
+    invoked separately by `main()`.
+    """
+    violations: list[dict] = []
+    violations.extend(check_footnote_refs_have_defs(page, body, frontmatter))
+    violations.extend(check_footnote_defs_referenced(page, body, frontmatter))
+    violations.extend(check_footnote_id_uniqueness(page, body, frontmatter))
+    violations.extend(check_footnote_placement(page, body, frontmatter))
+    return violations
 
 
 def main():
