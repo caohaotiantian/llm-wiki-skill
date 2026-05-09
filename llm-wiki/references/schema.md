@@ -18,6 +18,71 @@ Default templates for wiki pages. These are starting points — adapt the struct
 
 For ideas, principles, patterns, methodologies.
 
+### v2 template (footnote-citation format)
+
+This is the current page format. Footnote refs `[^id]` cite per-sentence sources; definitions live at the bottom of the file. Frontmatter declares `format_version: 2` and may carry `claims_inferred:` / `claims_ambiguous:` lists.
+
+```markdown
+---
+aliases: []
+tags: [concept]
+sources: []
+created: YYYY-MM-DD
+updated: YYYY-MM-DD
+status: active
+format_version: 2
+claims_inferred: []
+claims_ambiguous: []
+---
+
+# Concept Name
+
+One-to-two sentence definition[^primary-source].
+
+## Overview
+
+What this concept is and why it matters[^primary-source]. Adoption has accelerated in recent surveys[^industry-survey].
+
+## Key Principles
+
+- Principle 1[^primary-source]
+- Principle 2[^industry-survey]
+
+## Applications
+
+How and where this concept is applied[^primary-source].
+
+## Relationships
+
+- Related to [[other-concept|Other Concept]] — shared foundation in X
+- Contrast with [[alternative-approach|Alternative Approach]] — differs in Y
+- Used by [[system-or-entity|System or Entity]]
+
+## Open Questions
+
+- Unresolved aspects worth investigating
+
+## Sources
+
+- [[raw/source-file]] — extracted YYYY-MM-DD
+
+---
+
+## Timeline
+
+- YYYY-MM-DD — Initial page created from [[raw/articles/primary-source]].
+- YYYY-MM-DD — New survey data added; compiled truth refreshed.
+
+[^primary-source]: [[raw/articles/primary-source]]
+[^industry-survey]: [[raw/reports/industry-survey-2026]]
+```
+
+The compiled-truth zone sits above the `---` separator; the timeline below it; footnote definitions follow the timeline at the very bottom of the file. `lint_links.py` enforces the placement (rule L-4) on v2 pages.
+
+### Legacy template (format_version: 1 / pre-footnote)
+
+Pages without `format_version: 2` are legacy. They use inline `[[wikilinks]]` for citations and inline `^[inferred]` / `^[ambiguous]` markers for confidence. New v2 lint rules (L-1..L-4) do not apply. Run `lint_links.py --fix` to migrate a legacy page in place.
+
 ```markdown
 ---
 aliases: []
@@ -254,6 +319,21 @@ Synthesized answer with citations to [[wiki pages]] and [[raw/sources]].
 - [[wiki/concepts/concept-a]] — relevant because X
 - [[wiki/entities/entity-b]] — mentioned Y
 ```
+
+### Query response format
+
+When the agent answers a question (whether or not the answer is filed as a Query/Analysis Page), the response is shaped as a small footnote-cited document mirroring the v2 page format: each factual sentence ends with one or more `[^id]` refs, and a block of `[^id]: …` footnote definitions follows at the end of the response.
+
+```markdown
+## Answer
+The transformer architecture replaces RNNs with self-attention[^attention-paper].
+Training cost was approximately $4.6M, though estimates vary[^cost-survey].
+
+[^attention-paper]: [[raw/articles/vaswani-attention]]
+[^cost-survey]: [[raw/reports/training-cost-2024]]
+```
+
+This shape is the same whether the answer is returned conversationally or filed as a page under `wiki/queries/`. When filed, the page wraps the answer with the rest of the Query/Analysis template above (Question, Evidence table, Gaps, Pages Consulted) and lists the same `[^id]: …` definitions at the bottom of the file (after the timeline, per the v2 placement rule).
 
 ---
 

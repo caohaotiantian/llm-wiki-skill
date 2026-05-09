@@ -170,6 +170,8 @@ Example:
 - The training cost was reported as $4.6M, though other estimates differ. ^[ambiguous]
 ```
 
+> **Cross-reference:** On v2 pages (frontmatter `format_version: 2`), the wiki uses Obsidian reference footnotes `[^id]` / `[^id]: …` for per-sentence citations in the compiled-truth zone, and the inline `^[inferred]` / `^[ambiguous]` markers above are migrated into frontmatter list fields `claims_inferred:` / `claims_ambiguous:`. See SKILL.md → "Page Model" for the full convention.
+
 ---
 
 ## URI Scheme

@@ -89,6 +89,22 @@ Every wiki page has two zones separated by `---`:
 
 See `references/schema.md` for full templates and examples.
 
+### Footnote Citations (v2 page format)
+
+The compiled-truth zone uses Obsidian reference footnotes `[^id]` for per-sentence citations: each factual sentence ends with one or more `[^id]` refs that bind the claim to its source. Per-sentence footnote citations make compiled truth verifiable without re-reading the timeline.
+
+Footnote definitions take the form `[^id]: …` and live at the bottom of the file, after the timeline (i.e., end of the page). Keeping every footnote definition at the bottom of the file gives Obsidian a single, predictable definition pool per page.
+
+Footnote IDs are page-local and derived from the citation target (e.g., a citation pointing at `[[raw/articles/fowler-microservices]]` uses `[^fowler-microservices]`). IDs collide across different targets with the same basename are disambiguated with `-2`, `-3` suffixes in document order.
+
+Inline `^[inferred]` / `^[ambiguous]` confidence markers (Obsidian's *inline* footnote form, syntactically distinct from `[^id]`) are replaced by two frontmatter list fields, `claims_inferred:` and `claims_ambiguous:`, on v2 pages. See `references/schema.md` for the full template.
+
+### Format Versioning
+
+A page is treated as v2 if and only if its frontmatter contains `format_version: 2` parsed as the integer literal `2`. Absence of the key, a string `"2"`, a float `2.1`, or any other value is treated as legacy. Legacy pages keep their current format (free-form prose with inline `[[wikilinks]]` and inline `^[inferred]` markers) until migrated by `lint_links.py --fix`, which is opportunistic: a legacy page receiving `--fix` for any reason gets its compiled-truth wikilinks rewritten as footnote refs `[^id]`, its inline confidence markers moved into frontmatter, and `format_version: 2` added. Migration is idempotent — running `--fix` on a v2 page is a no-op.
+
+The four lint rules that apply only on v2 pages: every `[^id]` ref has a matching `[^id]:` definition (L-1); every `[^id]:` definition is referenced at least once, with warning severity (L-2); footnote IDs are unique within the page (L-3); all footnote definitions sit after the last timeline line (L-4).
+
 ### Frontmatter
 
 ```yaml
@@ -103,6 +119,9 @@ created: YYYY-MM-DD
 updated: YYYY-MM-DD
 status: active       # active | stub | needs-review | archived
 weight: 0            # additive score boost (optional)
+format_version: 2    # signals v2 footnote-citation format; absent or non-int-2 = legacy
+claims_inferred: []  # v2: claim snippets previously marked ^[inferred] in body
+claims_ambiguous: [] # v2: claim snippets previously marked ^[ambiguous] in body
 ---
 ```
 
@@ -261,7 +280,18 @@ Sort candidates by `computed_score` descending (from frontmatter). Read the high
 
 ### Step 3: Synthesize
 
-Answer using the wiki's compiled knowledge. When multiple pages cover the same topic, weight higher-scored pages more. Cite sources with `[[wikilinks]]` — list higher-scored sources first.
+Answer using the wiki's compiled knowledge. When multiple pages cover the same topic, weight higher-scored pages more. Format the response using footnote citations: each factual sentence in the answer ends with one or more `[^id]` refs that cite the source page or raw document, and a block of `[^id]: …` footnote definitions is listed at the end of the response. This mirrors the v2 page model — the response is itself a small footnote-cited document. Higher-scored sources should still be listed first inside the definition block.
+
+Example of the expected response shape:
+
+```markdown
+## Answer
+The transformer architecture replaces RNNs with self-attention[^attention-paper].
+Training cost was approximately $4.6M, though estimates vary[^cost-survey].
+
+[^attention-paper]: [[raw/articles/vaswani-attention]]
+[^cost-survey]: [[raw/reports/training-cost-2024]]
+```
 
 ### Step 4: Update counters
 
@@ -274,9 +304,14 @@ Save as a page under `wiki/queries/` if the answer synthesizes across 3+ pages o
 
 ### Query output format
 
+The full response wraps the footnoted answer (Step 3) with an optional "Sources consulted" appendix that explains *why* each cited page was relevant — useful when the response synthesizes across many pages.
+
 ```markdown
 ## Answer
-[Synthesized answer citing [[Wiki Page]] sources]
+[Synthesized answer; each factual sentence ends with one or more [^id] refs.]
+
+[^id-1]: [[wiki/concepts/concept-a]]
+[^id-2]: [[wiki/entities/entity-b]]
 
 ### Sources consulted
 - [[wiki/concepts/concept-a]] — relevant because X
