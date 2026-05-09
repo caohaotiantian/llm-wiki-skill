@@ -1336,19 +1336,6 @@ def _serialize_frontmatter(fm: dict) -> str:
     ).rstrip("\n")
 
 
-def _strip_frontmatter_block(content: str) -> tuple[str, str | None]:
-    """Return (body_without_frontmatter, original_fm_text or None).
-
-    `original_fm_text` is the raw YAML text between the `---` fences,
-    without the fences themselves.
-    """
-    content = content.replace("\r\n", "\n").replace("\r", "\n")
-    m = re.match(r"^---[ \t]*\n(.*?)\n(?:---|\.\.\.)[ \t]*(\n|$)", content, re.DOTALL)
-    if not m:
-        return content, None
-    return content[m.end():], m.group(1)
-
-
 def migrate_legacy_page(
     page_path: str | Path, content: str
 ) -> tuple[str, MigrationReport]:
@@ -1557,6 +1544,7 @@ def main():
             report = resolve_links(vault_path, index, files_to_scan)
         report["summary"]["fixes_applied"] = fixes
         report["summary"]["migrations_applied"] = migrated
+        report["summary"]["migrations_skipped_v2"] = skipped_v2
 
     print_report(report, json_output=args.json_output)
 
